@@ -1,0 +1,10 @@
+[
+  {
+    "id": "records-a", 
+    "name-pattern": "'records-a'-yyyy-MM-dd'.txt'"
+  },
+  { 
+    "id": "records-b",
+    "name-pattern": "'records-b'-yyyy-MM-dd'.txt'"
+  }
+]
