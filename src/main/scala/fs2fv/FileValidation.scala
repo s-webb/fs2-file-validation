@@ -63,26 +63,21 @@ object FileValidation extends StrictLogging {
         found.foreach { f =>
           logger.debug(s"Found file $f")
         }
-        val files = checkFilesPresent(forDate, required, found).toList
+        val requiredAt = requiredForDate(required, forDate)
 
-        val missingC: ConnectionIO[(Boolean, Map[String, Int])] = 
-          for {
-            jobId <- newJobId(startedAt)
-            filenamesAndIds <- recordFiles(jobId, files)
-            missing <- recordMissing(files, filenamesAndIds)
-          } yield {
-            (missing, filenamesAndIds)
-          }
-        val fileCheck: Task[(Boolean, Map[String, Int])] = xa.trans(missingC)
-        val (missing, filenamesAndIds) = fileCheck.unsafePerformSync
+        val missing = requiredAt -- found
 
-        if (missing) 1 else {
+        val initialisationTask = initialiseFiles(xa, startedAt, requiredAt, missing)
+        val (jobId, filenamesAndIds) = initialisationTask.unsafePerformSync
+
+        if (missing.size > 0) 1 else {
           // filenamesAndIds could be a Stream too...
           val filenamesAndIdsS: Stream[Nothing, (String, Int)] = Stream(filenamesAndIds.toList:_*)
           val errIdsNested: Stream[Task, Stream[Task, Int]] = filenamesAndIdsS.map(fileValidator.tupled)
           val errIds: Stream[Task, Int] = concurrent.join(2)(errIdsNested)
 
-          val rowErrCount: Int = errIds.zipWithIndex.runLast.unsafePerformSync.map(_._2 + 1).getOrElse(0)
+          val rowErrCountTask: Task[Int] = errIds.zipWithIndex.runLast.map(_.map(_._2 + 1).getOrElse(0))
+          val rowErrCount: Int = rowErrCountTask.unsafePerformSync
           logger.info(s"Count of row errors: ${rowErrCount}")
 
           if (rowErrCount > 0) 1 else 0
@@ -94,6 +89,20 @@ object FileValidation extends StrictLogging {
     }
   }
 
+  def initialiseFiles(xa: Transactor[Task], startedAt: LocalDate, requiredAt: Set[String], 
+      missing: Set[String]): Task[(Int, Map[String, Int])] = {
+
+    val missingC: ConnectionIO[(Int, Map[String, Int])] = 
+      for {
+        jobId <- newJobId(startedAt)
+        filenamesAndIds <- recordFiles(jobId, requiredAt)
+        _ <- recordMissing(missing, filenamesAndIds)
+      } yield {
+        (jobId, filenamesAndIds)
+      }
+    xa.trans(missingC)
+  }
+
   def validateFile(targetDir: Path, xa: Transactor[Task], fileChunkSizeBytes: Int = 4096, insertBatchSize: Int = 100)
       (filename: String, fileId: Int): Stream[Task, Int] = {
 
@@ -101,7 +110,11 @@ object FileValidation extends StrictLogging {
     // if it has any impact on concurrency
     val bytes: Stream[Task, Byte] = io.file.readAll[Task](targetDir.resolve(filename), fileChunkSizeBytes)
     val toInsert = DbAccess.failureToInsert(fileId) _
-    val inserts: Stream[Task, ConnectionIO[Int]] = RowValidation.validateBytes(bytes, Some(filename)).map(toInsert)
+
+    val failures: Stream[Task, RowFailure] = RowValidation.validateBytes(bytes, Some(filename)).collect {
+      case Left(f) => f
+    }
+    val inserts: Stream[Task, ConnectionIO[Int]] = failures.map(toInsert)
     val insertsB: Stream[Task, Vector[ConnectionIO[Int]]] = inserts.vectorChunkN(insertBatchSize)
 
     val errIdsNested: Stream[Task, Stream[Task, Int]] = insertsB.map { is => 
@@ -112,7 +125,6 @@ object FileValidation extends StrictLogging {
       Stream.eval(t).flatMap(x => x)
     }
     val errIds: Stream[Task, Int] = concurrent.join(3)(errIdsNested)
-    // errIds
 
     val controlled: Stream[Task, Int] = Stream.eval(async.signalOf[Task, Int](0)).flatMap { errCountSignal =>
       val errorsAboveThreshold = errCountSignal.discrete.map(_ > 10)
@@ -129,27 +141,21 @@ object FileValidation extends StrictLogging {
     DbAccess.insertJob(startedAt)
   }
 
-  def recordFiles(jobId: Int, files: List[(String, Boolean)]): ConnectionIO[Map[String, Int]] = {
-    val filenamesAndIdsC: List[ConnectionIO[(String, Int)]] = files.map { case (filename, _) =>
-      DbAccess.insertFile(jobId, filename).map((filename, _))
+  def recordFiles(jobId: Int, files: Set[String]): ConnectionIO[Map[String, Int]] = {
+    val filenamesAndIdsC: List[ConnectionIO[(String, Int)]] = files.toList.map { filename =>
+      DbAccess.insertFile(jobId, filename).map(id => (filename, id))
     }
     filenamesAndIdsC.sequenceU.map(_.toMap)
   }
 
-  def recordMissing(files: List[(String, Boolean)], filenamesAndIds: Map[String, Int]): ConnectionIO[Boolean] = {
-    val missing = files.filter(!_._2)
-    val missingErrorsC = missing.map { case (filename, _) =>
+  def recordMissing(missing: Set[String], filenamesAndIds: Map[String, Int]): ConnectionIO[Set[(String, Int)]] = {
+    val missingErrorsC: List[ConnectionIO[(String, Int)]] = missing.toList.map { filename =>
       logger.info(s"Missing file $filename")
-      DbAccess.insertFileError(filenamesAndIds(filename), "missing")
+      DbAccess.insertFileError(filenamesAndIds(filename), "missing").map(id => (filename, id))
     }
-    missingErrorsC.sequenceU.map(_.size > 0)
+    missingErrorsC.sequenceU.map(_.toSet)
   }
 
-  def checkFilesPresent(forDate: LocalDate, required: Set[RequiredFile], 
-      files: Set[String]): Set[(String, Boolean)] = {
-    required.map(r => {
-      val n = r.nameForDate(forDate)
-      (n, files.contains(n))
-    })
-  }
+  def requiredForDate(required: Set[RequiredFile], forDate: LocalDate): Set[String] =
+    required.map(_.nameForDate(forDate))
 }
