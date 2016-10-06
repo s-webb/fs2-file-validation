@@ -1,6 +1,7 @@
 package fs2fv
 
-import java.time.LocalDate
+import java.sql.Timestamp
+import java.time.LocalDateTime
 
 import doobie.imports._
 
@@ -13,8 +14,11 @@ object DbAccess {
     "org.postgresql.Driver", "jdbc:postgresql:fs2fv", "fs2fv_user", "password"
   )
 
-  def insertJob(startedAt: LocalDate): ConnectionIO[Int] =
-    sql"insert into dq_job(started_at) values (${startedAt.toString})".update.withUniqueGeneratedKeys("id")
+  def insertJob(startedAt: LocalDateTime): ConnectionIO[Int] = {
+    val ts = Timestamp.valueOf(startedAt)
+    // for hsql, startedAt.toString works...
+    sql"insert into dq_job(started_at) values (${ts})".update.withUniqueGeneratedKeys("id")
+  }
 
   def insertFile(jobId: Int, fileId: String): ConnectionIO[Int] =
     sql"insert into dq_job_file(job_id, file_id) values ($jobId, $fileId)".update.withUniqueGeneratedKeys("id")

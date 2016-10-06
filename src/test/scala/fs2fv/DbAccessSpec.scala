@@ -1,6 +1,6 @@
 package fs2fv
 
-import java.time.LocalDate
+import java.time.LocalDateTime
 
 import org.scalatest.{Matchers, WordSpecLike}
 
@@ -17,7 +17,7 @@ class DbAccessSpec extends WordSpecLike with Matchers with InitialiseDb {
 
     "insert records" in {
       val xa = initialiseDb()
-      val startedAt = LocalDate.parse("2016-07-21")
+      val startedAt = LocalDateTime.parse("2016-07-21T00:00:00")
       val jobIdC = DbAccess.insertJob(startedAt)
       val jobId = xa.trans(jobIdC).unsafePerformSync
       jobId should be (1)
