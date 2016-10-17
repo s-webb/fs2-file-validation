@@ -1,0 +1,32 @@
+Things to do:
+
+ - separate out concerns using free monads
+ - add merging into the top-level, so we can do a combined validate/merge pipeline
+ - progress/status reporting via scalajs
+ - a http4s API
+
+ ----
+
+What distinct operations are going on in FileValidation?
+
+ - parse the config
+ - determine which files are missing / present
+ - generate IDs for the files and job
+ - record which files are missing
+ - validate a file
+ - persist row failures
+
+There's a clear split here between database stuff and non-database stuff.
+
+Obvious design glitches:
+ - validateFile depends directly on io.file.readAll, should be EOTW
+   - changed this so that validateFile is basically just a factory method, I think it's ok for it to to have io.file
+     in now
+ - initialiseFiles mixes concerns, it's doing DB stuff and file stuff
+   - actually, is it just doing DB stuff?
+   - split this into checkFilesExist / initialiseJob
+
+----
+
+Next up would be:
+ - can I turn the function signatures in FVStreamOps, FVDbOps into algebra + interpreter?
