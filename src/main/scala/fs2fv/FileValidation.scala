@@ -1,5 +1,14 @@
 package fs2fv
 
+import cats.data.Xor
+
+import com.typesafe.scalalogging.StrictLogging
+
+import EnrichNTOps._
+import FileValidation.PersistRowFailures
+import filevalidation._
+import fs2fv.filevalidation.StreamOps
+
 import java.nio.file.{Files, Path, Paths}
 
 import java.time.{Duration, LocalDate, LocalDateTime}
@@ -7,21 +16,8 @@ import java.time.format.DateTimeFormatter
 
 import scala.collection.JavaConverters._
 
-import cats.data.Xor
-
-import com.typesafe.scalalogging.StrictLogging
-
-import doobie.imports._
-import doobie.util.transactor.Transactor
-
-import fs2.{async, concurrent, io, Pipe, Sink, Strategy, Stream}
-// need to use scalaz Task rather than fs2 Task for interop with doobie,
-// so using the scalaz Task Effect from fs2/scalaz interop module
-import fs2.interop.scalaz._
-
 import scalaz._, Scalaz._
 import scalaz.concurrent.Task
-
 
 // Run with these args...
 //
@@ -31,7 +27,7 @@ import scalaz.concurrent.Task
 //
 // fs2fv ../../../../it/large/config.json ../../../../it/large/staging/ 2016-07-21
 //
-// To initialise database
+// To initialise database:
 //
 // create database fs2fv;
 // create role fs2fv_user with login password 'password';
@@ -42,8 +38,6 @@ import scalaz.concurrent.Task
 //
 // ... and yet I can process 1,000,000 rows in 16s if I don't use the control signal. Hmm.
 // 10MB (ish) is 15s, 40MB/min, 2400MB/h (240m rows/h)
-//
-// ... at something like 90MB/h (8m rows/h) currently!
 object Main extends App with StrictLogging {
 
   run(args(0), args(1), args(2))
@@ -53,22 +47,43 @@ object Main extends App with StrictLogging {
   // forDateText: 2016-07-21
   def run(configFile: String, targetDirStr: String, forDateText: String): Unit = {
     import FileValidation._
-    import FileValidationStreamOps._
-    import FileValidationDbOps._
+    import filevalidation.StreamOps._
+    import filevalidation.DatabaseOps._
 
     val startedAt = LocalDateTime.now
     val configText = new String(Files.readAllBytes(Paths.get(configFile)))
+    val requiredFiles = 
+      RequiredFile.parseRequiredFiles(configText) match {
+        case Xor.Right(required) => required
+        case Xor.Left(e) => throw new RuntimeException("Failed to parse required files", e)
+      }
     val targetDir = Paths.get(targetDirStr)
 
     val xa = DbAccess.xa
     val mkPersistRF: Int => PersistRowFailures = id => insertRowFailures(id, xa)
-    val eachFile = validateFile(targetDir, mkPersistRF, 4096, 1000) _
 
     val initJob = initialiseJob(xa) _
 
-    val exitCodeT = FileValidation.runBatch(
-      LocalDateTime.now, configText, LocalDate.parse(forDateText), targetDir, initJob, eachFile)
+    val forDate = LocalDate.parse(forDateText)
+    val exitCodeT = FileValidation.runBatch(startedAt, configText, forDate, targetDir, initJob, mkPersistRF)
     val exitCode = exitCodeT.unsafePerformSync
+    
+
+    // this is a bit clunky, no way of defining a coproduct over an arbitrary number of types?
+    type Eff1[A] = Coproduct[StreamOpsDsl, DatabaseOpsDsl, A]
+    val streamInt = new StreamOpsInterpreter(targetDir, mkPersistRF, tooManyErrors, 4096, 1000)
+    val databaseInt = new DatabaseOpsInterpreter(xa)
+    val interpreter1: Eff1 ~> Task = streamInt :+: databaseInt
+
+    // type Eff[A] = Coproduct[FileValidationDsl, Eff1, A]
+    // val validationInt = new FileValidationInterpreter(targetDir, mkPersistRF)
+    // val interpreter: Eff ~> Task = interpreter1 :+: validationInt
+
+    // val program = FileValidation.runBatchFree[Eff](requiredFiles, targetDir, forDate, startedAt)
+
+    // val interpreter: Eff ~> Task = ConsoleInterpreter :+: Log4JInterpreter
+    // FileValidation.runBatchFree(required, targetDir, forDate, startedAt)
+    // (valid, stream, db)
 
     val endedAt = LocalDateTime.now
     val duration = Duration.between(startedAt, endedAt)
@@ -77,6 +92,55 @@ object Main extends App with StrictLogging {
     logger.info(s"Terminating with exit code: $exitCode")
 
     System.exit(exitCode)
+  }
+}
+
+sealed trait FileValidationDsl[A]
+
+case class CheckFilesExist(targetDir: Path, required: Set[RequiredFile], 
+  forDate: LocalDate) extends FileValidationDsl[(Set[String], Set[String])]
+
+case class ValidateFiles(jobId: Int, missing: Set[String], filenamesAndIds: Map[String, Int]) 
+  extends FileValidationDsl[Int]
+
+object FileValidationOpsFree {
+
+  class Ops[S[_]](implicit s0: FileValidationDsl :<: S) {
+
+    def checkFilesExist(targetDir: Path, required: Set[RequiredFile], 
+      forDate: LocalDate): Free[S, (Set[String], Set[String])] =
+        Free.liftF(s0.inj(CheckFilesExist(targetDir, required, forDate)))
+
+    def validateFiles(jobId: Int, missing: Set[String], filenamesAndIds: Map[String, Int]): Free[S, Int] =
+      Free.liftF(s0.inj(ValidateFiles(jobId, missing, filenamesAndIds)))
+  }
+
+  object Ops {
+    implicit def apply[S[_]](implicit s0: FileValidationDsl :<: S): Ops[S] = {
+      new Ops[S]
+    }
+  }
+}
+
+class FileValidationInterpreter(targetDir: Path, 
+    mkPersistRF: Int => PersistRowFailures) extends (FileValidationDsl ~> Task) {
+
+  val fileValidator = StreamOps.validateFile(targetDir, mkPersistRF, FileValidation.tooManyErrors, 4096, 1000) _
+
+  def apply[A](dsl: FileValidationDsl[A]): Task[A] = dsl match {
+
+    case CheckFilesExist(targetDir, required, forDate) =>
+      FileValidation.checkFilesExist(targetDir, required, forDate).point[Task]
+
+    case ValidateFiles(jobId, missing, filenamesAndIds) =>
+      if (missing.size > 0) {
+        1.point[Task]
+      } else {
+        val errCountsL: List[Task[Int]] = filenamesAndIds.map { case (name, id) =>
+          FileValidation.runSingleFile(name, id, fileValidator, targetDir)
+        }.toList
+        errCountsL.sequenceU.map(cs => if (cs.exists(_ > 0)) 1 else 0)
+      }
   }
 }
 
@@ -89,29 +153,48 @@ object Main extends App with StrictLogging {
  */
 object FileValidation extends StrictLogging {
 
-  import FileValidationStreamOps._
-
   implicit val S = fs2.Strategy.fromFixedDaemonPool(4, threadName = "worker")
 
-  type FileValidator = (String, Int) => Stream[Task, ((Int, Int), Seq[String])]
+  type ErrorThreshold = (Int, Int) => Boolean
+  type FileValidator = (String, Int) => Task[(Int, Int)]
   // I don't like this name!
   type PersistRowFailures = Vector[RowFailure] => Task[Vector[Int]]
   type InitialiseJob = (LocalDateTime, Set[String], Set[String]) => Task[(Int, Map[String, Int])]
 
-  // Still to do...
-  // - abstract over Task completely (would need to abstract Task out of StreamOps first)
+  import filevalidation.{StreamOpsFree, DatabaseOpsFree}
+
+  def runBatchFree[S[_]](required: Set[RequiredFile], targetDir: Path, forDate: LocalDate, 
+    startedAt: LocalDateTime)(implicit
+    valid: FileValidationOpsFree.Ops[S],
+    stream: StreamOpsFree.Ops[S],
+    db: DatabaseOpsFree.Ops[S]
+  ): Free[S, Int] = {
+
+    // can't use a destructuring bind in the for statement because free lacks withFilter, because reasons
+    // https://github.com/scalaz/scalaz/pull/728
+    for {
+      r1 <- valid.checkFilesExist(targetDir, required, forDate)
+      (requiredAt, missing) = r1
+      r2 <- db.initialiseJob(startedAt, requiredAt, missing)
+      (jobId, filenamesAndIds) = r2
+      exitCode <- valid.validateFiles(jobId, missing, filenamesAndIds)
+    } yield exitCode
+  }
+
   def runBatch(startedAt: LocalDateTime, configText: String, forDate: LocalDate, targetDir: Path, 
-      initialiseJob: InitialiseJob, fileValidator: FileValidator): Task[Int] = {
+      initialiseJob: InitialiseJob, mkPersistRF: Int => PersistRowFailures): Task[Int] = {
 
     RequiredFile.parseRequiredFiles(configText) match {
       case Xor.Right(required) =>
 
+
         val (requiredAt, missing) = checkFilesExist(targetDir, required, forDate)
         val initialisationTask = initialiseJob(startedAt, requiredAt, missing)
 
+        val fileValidator = StreamOps.validateFile(targetDir, mkPersistRF, tooManyErrors, 4096, 1000) _
         val filesToExitCode: (Int, Map[String, Int]) => Task[Int] = (jobId, filenamesAndIds) => {
           if (missing.size > 0) {
-            Task.delay(1) 
+            1.point[Task]
           } else {
             val errCountsL: List[Task[Int]] = filenamesAndIds.map { case (name, id) =>
               runSingleFile(name, id, fileValidator, targetDir)
@@ -122,7 +205,8 @@ object FileValidation extends StrictLogging {
 
         for {
           namesAndIds <- initialisationTask
-          exitCode <- filesToExitCode.tupled(namesAndIds)
+          (jobId, filenamesAndIds) = namesAndIds
+          exitCode <- filesToExitCode(jobId, filenamesAndIds)
         } yield exitCode
 
       case Xor.Left(error) =>
@@ -149,9 +233,7 @@ object FileValidation extends StrictLogging {
       logger.info(s"Total rows: ${rowErrCount + rowPassCount}, failed: ${rowErrCount}, passed: ${rowPassCount}")
     }
 
-    // the runLast here discards the stream of valid data...
-    val rowErrCountTask: Task[(Int, Int)] = 
-      fileValidator(name, id).runLast.map(_.map(_._1).getOrElse((0, 0)))
+    val rowErrCountTask: Task[(Int, Int)] = fileValidator(name, id)
 
     for {
       startedAt <- Task.delay(LocalDateTime.now)
@@ -183,108 +265,9 @@ object FileValidation extends StrictLogging {
     (requiredAt, missing)
   }
 
-  def validateFile(targetDir: Path,
-      mkPersistRF: Int => PersistRowFailures,
-      fileChunkSizeBytes: Int = 4096, persistBatchSize: Int = 100)
-      (filename: String, fileId: Int): Stream[Task, ((Int, Int), Seq[String])] = {
-
-    val bytes: Stream[Task, Byte] = io.file.readAll[Task](targetDir.resolve(filename), fileChunkSizeBytes)
-    bytes.through(validateFileBytes(filename, mkPersistRF(fileId), persistBatchSize, tooManyErrors))
-  }
-
-  // Below here, is file validation stuff
   def tooManyErrors(f: Int, p: Int): Boolean = {
     val total = f + p
     // where 'too high' is >= 50% after 10000 records
     (total > 10000) && ((f * 100) / total) < 50
-  }
-}
-
-/**
- * This is a namespace for all stream operations related to file validation
- */
-object FileValidationStreamOps {
-
-  import FileValidation.PersistRowFailures
-  import RowValidation.validateBytes
-
-  // tooManyErrors should really be an arg here
-  def validateFileBytes(filename: String, 
-      persistRF: PersistRowFailures, persistBatchSize: Int,
-      tooManyErrors: (Int, Int) => Boolean): Pipe[Task, Byte, ((Int, Int), Seq[String])] = bytes => {
-
-    validateBytes(bytes, Some(filename)).
-    observe(sinkRowFailures(persistRF, persistBatchSize)).
-    through(countsAndPasses).
-    takeWhile { case ((f, p), _) => !tooManyErrors(f, p) }
-  }
-
-  def countsAndPasses[F[_]]: Pipe[F, Either[RowFailure, Seq[String]], ((Int, Int), Seq[String])] = in => {
-    val z: ((Int, Int), Seq[String]) = ((0, 0), Seq[String]())
-    val counted = in.scan (z) { 
-      case (((f, p), _), Left(failure)) => ((f + 1, p), Seq[String]())
-      case (((f, p), _), Right(pass)) => ((f, p + 1), pass)
-    }
-    counted.filter(_._2.size > 0)
-  }
-
-  def sinkRowFailures(persist: PersistRowFailures, 
-      persistBatchSize: Int = 1000): Sink[Task, Either[RowFailure, Seq[String]]] = {
-
-    in: Stream[Task, Either[RowFailure, Seq[String]]] => {
-      val failures: Stream[Task, RowFailure] = in.collect { case Left(f) => f }
-      val failuresChunked: Stream[Task, Vector[RowFailure]] = failures.vectorChunkN(persistBatchSize)
-
-      val errIdsNested: Stream[Task, Stream[Task, Vector[Int]]] = failuresChunked.map(c => Stream.eval(persist(c)))
-      concurrent.join(3)(errIdsNested).map(_ => ())
-    }
-  }
-}
-
-/**
- * This is a namespace for all database operations related to file validation
- */
-object FileValidationDbOps extends StrictLogging {
-
-  import FileValidation.PersistRowFailures
-
-  def initialiseJob(xa: Transactor[Task])(startedAt: LocalDateTime, requiredAt: Set[String], 
-      missing: Set[String]): Task[(Int, Map[String, Int])] = {
-
-    val jobDetails: ConnectionIO[(Int, Map[String, Int])] = 
-      for {
-        jobId <- DbAccess.insertJob(startedAt)
-        filenamesAndIds <- recordFiles(jobId, requiredAt)
-        _ <- recordMissing(missing, filenamesAndIds)
-      } yield {
-        (jobId, filenamesAndIds)
-      }
-
-    xa.trans(jobDetails)
-  }
-
-  private def recordFiles(jobId: Int, files: Set[String]): ConnectionIO[Map[String, Int]] = {
-    val filenamesAndIdsC: List[ConnectionIO[(String, Int)]] = files.toList.map { filename =>
-      DbAccess.insertFile(jobId, filename).map(id => (filename, id))
-    }
-    filenamesAndIdsC.sequenceU.map(_.toMap)
-  }
-
-  private def recordMissing(missing: Set[String], 
-      filenamesAndIds: Map[String, Int]): ConnectionIO[Set[(String, Int)]] = {
-
-    val missingErrorsC: List[ConnectionIO[(String, Int)]] = missing.toList.map { filename =>
-      DbAccess.insertFileError(filenamesAndIds(filename), "missing").map(id => (filename, id))
-    }
-    missingErrorsC.sequenceU.map(_.toSet)
-  }
-
-  def insertRowFailures(fileId: Int, xa: Transactor[Task]): PersistRowFailures = is => {
-    val inserts: Vector[ConnectionIO[Int]] = is.map(DbAccess.failureToInsert(fileId)(_))
-    val sequenced: ConnectionIO[Vector[Int]] = inserts.sequenceU
-    for {
-      _ <- Task.delay(logger.info(s"Inserting row error(s), size ${is.size}"))
-      ids <- xa.trans(sequenced)
-    } yield ids
   }
 }

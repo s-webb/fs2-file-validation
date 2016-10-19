@@ -30,3 +30,14 @@ Obvious design glitches:
 
 Next up would be:
  - can I turn the function signatures in FVStreamOps, FVDbOps into algebra + interpreter?
+
+Ok, done the basics of making composable algebras for stream and db, but I think there are other
+bits in FileValidation that need turning into a DSL (i.e. parseRequiredFiles and checkFilesExist) before I can
+really compose everything together.
+
+----
+
+Fundamental misunderstanding #1 - looks like you can only compose two interpreters
+ - so, I think the thing to do here is to build FileValidation on top of StreamOps, and then combine
+   the result with DatabaseOps at the top level
+ - problem with that being that StreamOps is kind-of dependant on DatabaseOps, so it becomes circular
