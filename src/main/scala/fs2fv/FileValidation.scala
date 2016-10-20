@@ -4,7 +4,7 @@ import cats.data.Xor
 
 import com.typesafe.scalalogging.StrictLogging
 
-import EnrichNTOps._
+import fs2fv.EnrichNTOps._
 import FileValidation.PersistRowFailures
 import filevalidation._
 import fs2fv.filevalidation.StreamOps
@@ -65,25 +65,26 @@ object Main extends App with StrictLogging {
     val initJob = initialiseJob(xa) _
 
     val forDate = LocalDate.parse(forDateText)
-    val exitCodeT = FileValidation.runBatch(startedAt, configText, forDate, targetDir, initJob, mkPersistRF)
-    val exitCode = exitCodeT.unsafePerformSync
+    // val exitCodeT = FileValidation.runBatch(startedAt, configText, forDate, targetDir, initJob, mkPersistRF)
+    // val exitCode = exitCodeT.unsafePerformSync
     
 
-    // this is a bit clunky, no way of defining a coproduct over an arbitrary number of types?
-    type Eff1[A] = Coproduct[StreamOpsDsl, DatabaseOpsDsl, A]
-    val streamInt = new StreamOpsInterpreter(targetDir, mkPersistRF, tooManyErrors, 4096, 1000)
-    val databaseInt = new DatabaseOpsInterpreter(xa)
-    val interpreter1: Eff1 ~> Task = streamInt :+: databaseInt
+    type F0[A] = Coproduct[StreamOpsDsl, DatabaseOpsDsl, A]
+    // apparently the ordering in the following is important, if you switch the first and second type params it
+    // fails to compile
+    type App[A] = Coproduct[FileValidationDsl, F0, A]
 
-    // type Eff[A] = Coproduct[FileValidationDsl, Eff1, A]
-    // val validationInt = new FileValidationInterpreter(targetDir, mkPersistRF)
-    // val interpreter: Eff ~> Task = interpreter1 :+: validationInt
+    val prg: Free[App, Int] = FileValidation.runBatchFree[App](requiredFiles, targetDir, forDate, startedAt)
 
-    // val program = FileValidation.runBatchFree[Eff](requiredFiles, targetDir, forDate, startedAt)
+    val streamInt: StreamOpsDsl ~> Task  = new StreamOpsInterpreter(
+        StreamOpsParams(targetDir, mkPersistRF, tooManyErrors, 4096, 1000))
+    val databaseInt: DatabaseOpsDsl ~> Task = new DatabaseOpsInterpreter(xa)
+    val validationInt: FileValidationDsl ~> Task  = new FileValidationInterpreter(targetDir, mkPersistRF)
 
-    // val interpreter: Eff ~> Task = ConsoleInterpreter :+: Log4JInterpreter
-    // FileValidation.runBatchFree(required, targetDir, forDate, startedAt)
-    // (valid, stream, db)
+    val interpreter1: F0 ~> Task = streamInt :+: databaseInt
+    val interpreter2: App ~> Task = validationInt :+: interpreter1
+    val exitCodeT: Task[Int] = prg.foldMap(interpreter2)
+    val exitCode = exitCodeT.unsafePerformSync
 
     val endedAt = LocalDateTime.now
     val duration = Duration.between(startedAt, endedAt)
@@ -122,8 +123,8 @@ object FileValidationOpsFree {
   }
 }
 
-class FileValidationInterpreter(targetDir: Path, 
-    mkPersistRF: Int => PersistRowFailures) extends (FileValidationDsl ~> Task) {
+class FileValidationInterpreter(targetDir: Path, mkPersistRF: Int => PersistRowFailures) 
+    extends (FileValidationDsl ~> Task) {
 
   val fileValidator = StreamOps.validateFile(targetDir, mkPersistRF, FileValidation.tooManyErrors, 4096, 1000) _
 
@@ -268,6 +269,6 @@ object FileValidation extends StrictLogging {
   def tooManyErrors(f: Int, p: Int): Boolean = {
     val total = f + p
     // where 'too high' is >= 50% after 10000 records
-    (total > 10000) && ((f * 100) / total) < 50
+    (total > 10000) && ((f * 100) / total) > 50
   }
 }

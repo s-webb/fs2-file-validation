@@ -27,7 +27,8 @@ libraryDependencies ++= Seq(
   "org.spire-math" %% "algebra" % "0.4.0",
   "co.fs2" %% "fs2-core" % fs2V,
   "co.fs2" %% "fs2-io" % fs2V,
-  "co.fs2" %% "fs2-scalaz" % "0.1.0"
+  "co.fs2" %% "fs2-scalaz" % "0.1.0",
+  "org.scalaz" %% "scalaz-core" % "7.2.6"
 )
 
 enablePlugins(JavaAppPackaging)

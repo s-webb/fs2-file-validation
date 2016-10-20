@@ -32,16 +32,19 @@ object StreamOpsFree {
   }
 }
 
-class StreamOpsInterpreter(targetDir: Path, mkPersistRF: Int => PersistRowFailures, 
+case class StreamOpsParams(targetDir: Path, mkPersistRF: Int => PersistRowFailures, 
     errorThreshold: ErrorThreshold, fileChunkSizeBytes: Int = 4096, persistBatchSize: Int = 100)
-    extends (StreamOpsDsl ~> Task) {
 
-  val validateFileOp = StreamOps.validateFile(
-    targetDir, mkPersistRF, errorThreshold, fileChunkSizeBytes, persistBatchSize) _
+class StreamOpsInterpreter(params: StreamOpsParams) extends (StreamOpsDsl ~> Task) {
 
-  def apply[A](dsl: StreamOpsDsl[A]): Task[A] = dsl match {
-    case ValidateFile(filename, fileId) =>
-      validateFileOp(filename, fileId)
+  def apply[A](dsl: StreamOpsDsl[A]): Task[A] = {
+    
+    dsl match {
+      case ValidateFile(filename, fileId) => 
+        val validateFileOp = StreamOps.validateFile(params.targetDir, params.mkPersistRF, params.errorThreshold, 
+          params.fileChunkSizeBytes, params.persistBatchSize) _
+        validateFileOp(filename, fileId)
+    }
   }
 }
 
