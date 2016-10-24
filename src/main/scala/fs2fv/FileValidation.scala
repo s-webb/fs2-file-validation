@@ -81,9 +81,10 @@ object Main extends App with StrictLogging {
     val databaseInt: DatabaseOpsDsl ~> Task = new DatabaseOpsInterpreter(xa)
     val validationInt: FileValidationDsl ~> Task  = new FileValidationInterpreter(targetDir, mkPersistRF)
 
-    val interpreter1: F0 ~> Task = streamInt :+: databaseInt
-    val interpreter2: App ~> Task = validationInt :+: interpreter1
-    val exitCodeT: Task[Int] = prg.foldMap(interpreter2)
+    // order in which interpreters are composed is signficant, must match that used in building the
+    // coproduct
+    val interpreter: App ~> Task = validationInt :+: streamInt :+: databaseInt
+    val exitCodeT: Task[Int] = prg.foldMap(interpreter)
     val exitCode = exitCodeT.unsafePerformSync
 
     val endedAt = LocalDateTime.now
