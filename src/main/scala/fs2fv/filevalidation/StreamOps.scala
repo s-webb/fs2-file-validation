@@ -74,7 +74,7 @@ object StreamOps {
     takeWhile { case ((f, p), _) => !tooManyErrors(f, p) }
   }
 
-  private def countsAndPasses[F[_]]: Pipe[F, Either[RowFailure, Seq[String]], ((Int, Int), Seq[String])] = in => {
+  def countsAndPasses[F[_]]: Pipe[F, Either[RowFailure, Seq[String]], ((Int, Int), Seq[String])] = in => {
     val z: ((Int, Int), Seq[String]) = ((0, 0), Seq[String]())
     val counted = in.scan (z) { 
       case (((f, p), _), Left(failure)) => ((f + 1, p), Seq[String]())

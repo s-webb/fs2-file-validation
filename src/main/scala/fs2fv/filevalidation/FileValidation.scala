@@ -13,7 +13,7 @@ import scalaz.concurrent.Task
 
 sealed trait FileValidationDsl[A]
 
-case class CheckFilesExist(targetDir: Path, required: Set[RequiredFile], 
+case class CheckFilesExist(lsTargetDir: () => Set[String], required: Set[RequiredFile], 
   forDate: LocalDate) extends FileValidationDsl[(Set[String], Set[String])]
 
 case class ValidateFiles(jobId: Int, missing: Set[String], filenamesAndIds: Map[String, Int]) 
@@ -23,9 +23,9 @@ object FileValidationOpsFree {
 
   class Ops[S[_]](implicit s0: FileValidationDsl :<: S) {
 
-    def checkFilesExist(targetDir: Path, required: Set[RequiredFile], 
+    def checkFilesExist(lsTargetDir: () => Set[String], required: Set[RequiredFile], 
       forDate: LocalDate): Free[S, (Set[String], Set[String])] =
-        Free.liftF(s0.inj(CheckFilesExist(targetDir, required, forDate)))
+        Free.liftF(s0.inj(CheckFilesExist(lsTargetDir, required, forDate)))
 
     def validateFiles(jobId: Int, missing: Set[String], filenamesAndIds: Map[String, Int]): Free[S, Int] =
       Free.liftF(s0.inj(ValidateFiles(jobId, missing, filenamesAndIds)))
@@ -47,8 +47,8 @@ class FileValidationInterpreter(targetDir: Path, fileValidator: FileValidator)
 
   def apply[A](dsl: FileValidationDsl[A]): Task[A] = dsl match {
 
-    case CheckFilesExist(targetDir, required, forDate) =>
-      FileValidation.checkFilesExist(targetDir, required, forDate).point[Task]
+    case CheckFilesExist(lsTargetDir, required, forDate) =>
+      FileValidation.checkFilesExist(lsTargetDir, required, forDate).point[Task]
 
     case ValidateFiles(jobId, missing, filenamesAndIds) =>
       if (missing.size > 0) {
@@ -103,11 +103,10 @@ object FileValidation extends StrictLogging {
     (durationSeconds, sizeMb, mbPerS)
   }
 
-  def checkFilesExist(targetDir: Path, required: Set[RequiredFile], forDate: LocalDate): 
+  def checkFilesExist(lsTargetDir: () => Set[String], required: Set[RequiredFile], forDate: LocalDate): 
       (Set[String], Set[String]) = {
 
-    logger.info(s"Checking for files in ${targetDir.toFile.getAbsolutePath}")
-    val found = targetDir.toFile.list.toSet
+    val found = lsTargetDir()
     logger.info(s"Found ${found.size} file(s) in staging dir")
     found.foreach { f =>
       logger.debug(s"Found file $f")

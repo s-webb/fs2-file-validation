@@ -4,9 +4,12 @@ import cats.data.Xor
 
 import com.typesafe.scalalogging.StrictLogging
 
+import doobie.util.transactor.Transactor
+
 import filevalidation._
 import fs2fv.EnrichNTOps._
 
+import java.io.File
 import java.nio.file.{Files, Path, Paths}
 import java.time.{Duration, LocalDate, LocalDateTime}
 
@@ -46,37 +49,35 @@ object Main extends App with StrictLogging {
 
     val startedAt = LocalDateTime.now
     val configText = new String(Files.readAllBytes(Paths.get(configFile)))
+    val targetDir = Paths.get(targetDirStr)
+
+    val xa = DbAccess.xa
+    val mkPersistRF: Int => PersistRowFailures = id => insertRowFailures(id, xa)
+    val fileValidator = StreamOps.validateFile(targetDir, mkPersistRF, FileValidation.tooManyErrors, 4096, 1000) _
+    val forDate = LocalDate.parse(forDateText)
+
+    val exitCode = run(startedAt, configText, forDate, targetDir, xa, fileValidator)
+    System.exit(exitCode)
+  }
+
+  // result type here should really be ParseError \/ Int
+  def run(startedAt: LocalDateTime, configText: String, forDate: LocalDate, targetDir: Path, 
+      xa: Transactor[Task], fileValidator: FileValidator): Int = {
+
     val requiredFiles = 
       RequiredFile.parseRequiredFiles(configText) match {
         case Xor.Right(required) => required
         case Xor.Left(e) => throw new RuntimeException("Failed to parse required files", e)
       }
-    val targetDir = Paths.get(targetDirStr)
 
-    val xa = DbAccess.xa
-    val mkPersistRF: Int => PersistRowFailures = id => insertRowFailures(id, xa)
-
-    val initJob = initialiseJob(xa) _
-
-    val forDate = LocalDate.parse(forDateText)
-
-    // can I use shapeless to construct this coproduct in a less clunky way? Looks like it uses :+: ...
-    type F0[A] = Coproduct[StreamOpsDsl, DatabaseOpsDsl, A]
-    // apparently the ordering in the following is important, if you switch the first and second type params it
-    // fails to compile
-    type App[A] = Coproduct[FileValidationDsl, F0, A]
+    type App[A] = Coproduct[FileValidationDsl, DatabaseOpsDsl, A]
 
     val prg: Free[App, Int] = runBatchFree[App](requiredFiles, targetDir, forDate, startedAt)
 
-    val streamInt: StreamOpsDsl ~> Task  = new StreamOpsInterpreter(
-        StreamOpsParams(targetDir, mkPersistRF, tooManyErrors, 4096, 1000))
     val databaseInt: DatabaseOpsDsl ~> Task = new DatabaseOpsInterpreter(xa)
-    val fileValidator = StreamOps.validateFile(targetDir, mkPersistRF, FileValidation.tooManyErrors, 4096, 1000) _
     val validationInt: FileValidationDsl ~> Task  = new FileValidationInterpreter(targetDir, fileValidator)
 
-    // order in which interpreters are composed is signficant, must match that used in building the
-    // coproduct
-    val interpreter: App ~> Task = validationInt :+: streamInt :+: databaseInt
+    val interpreter: App ~> Task = validationInt :+: databaseInt
     val exitCodeT: Task[Int] = prg.foldMap(interpreter)
     val exitCode = exitCodeT.unsafePerformSync
 
@@ -86,20 +87,23 @@ object Main extends App with StrictLogging {
     logger.info(s"Run completed in duration of: $duration")
     logger.info(s"Terminating with exit code: $exitCode")
 
-    System.exit(exitCode)
+    exitCode
   }
 
   def runBatchFree[S[_]](required: Set[RequiredFile], targetDir: Path, forDate: LocalDate, 
     startedAt: LocalDateTime)(implicit
     valid: FileValidationOpsFree.Ops[S],
-    stream: StreamOpsFree.Ops[S],
     db: DatabaseOpsFree.Ops[S]
   ): Free[S, Int] = {
 
     // can't use a destructuring bind in the for statement because free lacks withFilter, because reasons
     // https://github.com/scalaz/scalaz/pull/728
+    def lsTargetDir(): Set[String] = {
+      logger.info(s"Checking for files in ${targetDir.toFile.getAbsolutePath}")
+      targetDir.toFile.list.toSet
+    }
     for {
-      r1 <- valid.checkFilesExist(targetDir, required, forDate)
+      r1 <- valid.checkFilesExist(lsTargetDir, required, forDate)
       (requiredAt, missing) = r1
       r2 <- db.initialiseJob(startedAt, requiredAt, missing)
       (jobId, filenamesAndIds) = r2
