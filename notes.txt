@@ -41,3 +41,11 @@ Fundamental misunderstanding #1 - looks like you can only compose two interprete
  - so, I think the thing to do here is to build FileValidation on top of StreamOps, and then combine
    the result with DatabaseOps at the top level
  - problem with that being that StreamOps is kind-of dependant on DatabaseOps, so it becomes circular
+
+Nope, that's not a fundamental misunderstanding, that's SI-2712! Also, even with the type unification fix, ordering
+of types is significant. Which can be a bit tricky.
+
+Next thing to do is to work out which parts of the code are no longer relevant.
+
+----
+

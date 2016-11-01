@@ -1,7 +1,6 @@
 package fs2fv.filevalidation
 
 import fs2fv.{RowFailure, RowValidation}
-import fs2fv.FileValidation.{ErrorThreshold, PersistRowFailures}
 
 import fs2.{concurrent, io, Pipe, Sink, Stream}
 // need to use scalaz Task rather than fs2 Task for interop with doobie,
@@ -20,15 +19,13 @@ case class ValidateFile(filename: String, fileId: Int) extends StreamOpsDsl[(Int
 object StreamOpsFree {
 
   class Ops[S[_]](implicit s0: StreamOpsDsl :<: S) {
-
     def validateFile(filename: String, fileId: Int): Free[S, (Int, Int)] = {
       Free.liftF(s0.inj(ValidateFile(filename, fileId)))
     }
   }
 
   object Ops {
-    implicit def apply[S[_]](implicit s0: StreamOpsDsl :<: S): Ops[S] =
-      new Ops[S]
+    implicit def apply[S[_]](implicit s0: StreamOpsDsl :<: S): Ops[S] = new Ops[S]
   }
 }
 

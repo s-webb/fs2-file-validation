@@ -4,21 +4,17 @@ import com.typesafe.scalalogging.StrictLogging
 
 import doobie.imports._
 
+import fs2fv.{DbAccess, RowFailure}
+
 import java.time.LocalDateTime
 
 import scalaz._, Scalaz._
 import scalaz.concurrent.Task
 
-import fs2fv.{DbAccess, RowFailure}
-import fs2fv.FileValidation.PersistRowFailures
-
 sealed trait DatabaseOpsDsl[A]
 
 case class InitialiseJob(startedAt: LocalDateTime, requiredAt: Set[String], 
   missing: Set[String]) extends DatabaseOpsDsl[(Int, Map[String, Int])]
-
-case class InsertRowFailures(fileId: Int, rowFailures: Vector[RowFailure]) extends 
-  DatabaseOpsDsl[Vector[Int]]
 
 object DatabaseOpsFree {
 
@@ -27,10 +23,6 @@ object DatabaseOpsFree {
     def initialiseJob(startedAt: LocalDateTime, requiredAt: Set[String], 
         missing: Set[String]): Free[S, (Int, Map[String, Int])] = {
       Free.liftF(s0.inj(InitialiseJob(startedAt, requiredAt, missing)))
-    }
-
-    def insertRowFailures(fileId: Int, rowFailures: Vector[RowFailure]): Free[S, Vector[Int]] = {
-      Free.liftF(s0.inj(InsertRowFailures(fileId, rowFailures)))
     }
   }
 
@@ -45,9 +37,6 @@ class DatabaseOpsInterpreter(xa: Transactor[Task]) extends (DatabaseOpsDsl ~> Ta
   def apply[A](dsl: DatabaseOpsDsl[A]): Task[A] = dsl match {
     case InitialiseJob(startedAt, requiredAt, missing) =>
       DatabaseOps.initialiseJob(xa)(startedAt, requiredAt, missing)
-
-    case InsertRowFailures(fileId, rowFailures) =>
-      DatabaseOps.insertRowFailures(fileId, xa)(rowFailures)
   }
 }
 
