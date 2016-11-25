@@ -1,4 +1,4 @@
-package fs2fv.streamthings
+package fs2fv
 
 import fs2._
 import fs2.util.{Async, Suspendable}
@@ -8,7 +8,7 @@ import fs2fv.MergeStreams._
 
 import java.nio.file.{Path, Paths}
 
-object StreamThings {
+object ValidateAndMerge {
 
   val fileChunkSizeBytes = 100 * 1024
 
@@ -81,10 +81,10 @@ object StreamThings {
     }
   }
 
-  private [streamthings] def maxForGroup(group: Seq[CountsAndLine]): Int = 
+  private [fs2fv] def maxForGroup(group: Seq[CountsAndLine]): Int = 
     group.lastOption.map { case ((f, _), _) => f }.getOrElse(0)
 
-  private [streamthings] def takeHighest(l1: Seq[Int], l2: Seq[Int]): Seq[Int] =
+  private [fs2fv] def takeHighest(l1: Seq[Int], l2: Seq[Int]): Seq[Int] =
     l1.zip(l2).map { case (a, b) => a max b }
 
   def outputPipe[F[_]]: Pipe[F, OutputRecord, Byte] =

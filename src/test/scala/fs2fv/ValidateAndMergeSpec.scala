@@ -1,4 +1,4 @@
-package fs2fv.streamthings
+package fs2fv
 
 import fs2._
 import fs2.interop.scalaz._
@@ -10,9 +10,9 @@ import org.scalatest.{Matchers, WordSpecLike}
 import scala.collection.mutable.ArrayBuffer
 import scalaz.concurrent.Task
 
-class StreamThingsSpec extends Matchers with WordSpecLike {
+class ValidateAndMergeSpec extends Matchers with WordSpecLike {
 
-  import StreamThings._
+  import ValidateAndMerge._
 
   "validateAndMergeStreams" should {
     "validate and merge streams" in {
@@ -47,7 +47,7 @@ class StreamThingsSpec extends Matchers with WordSpecLike {
       val result: Vector[Seq[Int]] = resultS.runLog.unsafePerformSync
       result should be (Seq(Seq(2, 2)))
 
-      println(outputBytes.toString)
+      // if I also wanted to ensure that all the good data came out correctly, how would I do that?
     }
   }
 }
