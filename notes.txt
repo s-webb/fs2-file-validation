@@ -49,3 +49,34 @@ Next thing to do is to work out which parts of the code are no longer relevant.
 
 ----
 
+So, what if I wanted to change this so that two files are validated and
+the 'good' streams resulting from that are merged?
+
+I'd have to change validateFile so that it doesn't discard the 'good' data
+
+There are quite a few streaming ops that could be composed better now...
+
+- validate a row of data
+- sink errors to the db
+- grouping
+- merging
+- sink output to a file
+
+I could have a set of operations that can be interpreted down to Stream...
+
+----
+
+In StreamThings, I've got a really clean implementation of validating and merging streams
+
+Where to take it next?
+
+ - Make the validation configurable (use a schema to specify the validation to apply to each input file)
+ - Make the set of input streams configurable
+ - Make the output transform configurable
+ - Write the bad data for each input file to a separate output file
+ - Tidy up the codebase to get rid of failed experiments
+ - Incorporate logging to DB in my 'good' branch
+ - Run this on some actual data
+
+This all assumes a mode of operation where someone puts together a set of input files in a directory, then
+runs the code to produce a 'good' set of output files plus a set of discarded data.

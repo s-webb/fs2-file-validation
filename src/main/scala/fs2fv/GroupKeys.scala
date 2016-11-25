@@ -8,10 +8,10 @@ object GroupKeys {
    * Pipe that groups adjacent elements in a stream by key, where each element in the output stream contains a Seq
    * of multiple elements from the input stream
    */
-  def groupKeys[F[_]]: Pipe[F, (Int, String), (Int, Seq[String])] = {
+  def groupKeys[F[_], A]: Pipe[F, (Int, A), (Int, Seq[A])] = {
 
-    def go(current: Option[(Int, Seq[String])]): 
-        Handle[F, (Int, String)] => Pull[F, (Int, Seq[String]), Unit] = h => {
+    def go(current: Option[(Int, Seq[A])]): 
+        Handle[F, (Int, A)] => Pull[F, (Int, Seq[A]), Unit] = h => {
 
       current match {
         case None =>
@@ -21,7 +21,7 @@ object GroupKeys {
             } else {
               val newKey = chunk(0)._1
               Pull.pure(()) >> go(Some(
-                (newKey, Seq[String]())
+                (newKey, Seq[A]())
               ))(h)
             }
           }
@@ -34,7 +34,7 @@ object GroupKeys {
               val differsAt = chunk.indexWhere(_._1 != k1).getOrElse(-1)
               if (differsAt == -1) {
                 // Add this chunk to the current Stream of chunks
-                val newOut: Seq[String] = out ++ chunk.toVector.map(_._2)
+                val newOut: Seq[A] = out ++ chunk.toVector.map(_._2)
                 Pull.pure(()) >> go(Some(
                   (k1, newOut)
                 ))(h)
@@ -43,7 +43,7 @@ object GroupKeys {
                 val matching = chunk.take(differsAt)
                 val nonMatching = chunk.drop(differsAt)
                 // Push the non-matching chunk back to the handle, can I do that?
-                val newOut: Seq[String] = out ++ matching.toVector.map(_._2)
+                val newOut: Seq[A] = out ++ matching.toVector.map(_._2)
                 Pull.output1((k1, newOut)) >> go(None)(h.push(nonMatching))
               }
 

@@ -1,5 +1,7 @@
 package fs2fv
 
+import fs2._
+import fs2.interop.scalaz._
 import fs2fv.filevalidation._
 
 import java.nio.file.{Files, Paths}
@@ -9,7 +11,6 @@ import doobie.imports._
 
 import org.scalatest.{Matchers, WordSpecLike}
 
-import fs2._
 
 class MainSpec extends WordSpecLike with Matchers with InitialiseDb {
 
@@ -40,6 +41,44 @@ class MainSpec extends WordSpecLike with Matchers with InitialiseDb {
         """.query[(Int, String, Int, String)].list.transact(xa).unsafePerformSync
 
       dbRows should have size (3)
+    }
+
+    "validate and merge" in {
+      val startedAt = LocalDateTime.parse("2016-08-06T00:00:00")
+      val forDate = LocalDate.parse("2016-07-21")
+      val targetDir = Paths.get("it/small/staging")
+      val configText = new String(Files.readAllBytes(Paths.get("it/small/config.json")))
+      val xa = initialiseDb()
+
+      val mkPersistRF: Int => PersistRowFailures = id => DatabaseOps.insertRowFailures(id, xa)
+      val eachFile = StreamOps.validateFileKeepGood(targetDir, mkPersistRF, FileValidation.tooManyErrors, 16, 2) _
+
+      implicit val S = fs2.Strategy.fromFixedDaemonPool(2, threadName = "worker")
+
+      // need to initialise the database here, call to initialiseJob
+      val required = Set[String]("records-a-2016-07-21.txt", "records-b-2016-07-21.txt")
+      val (jobId, filenamesAndIds) = DatabaseOps.initialiseJob(xa)(startedAt, required, 
+        Set[String]()).unsafePerformSync
+
+      val merged: Vector[(Int, Seq[Seq[String]], Seq[Seq[String]])] = StreamOps.mergeTwo(
+          eachFile, 
+          ("records-a-2016-07-21.txt", filenamesAndIds("records-a-2016-07-21.txt")), 
+          ("records-b-2016-07-21.txt", filenamesAndIds("records-b-2016-07-21.txt"))
+        ).runLog.unsafePerformSync
+
+      merged.size should be (3)
+      merged(0) should be ((1, 
+        Seq(Seq("1", "a", "b"), Seq("1", "a", "b")), 
+        Seq(Seq("1", "a", "b"), Seq("1", "a", "b"))
+      ))
+      merged(1) should be ((2, 
+        Seq(Seq("2", "a", "b")), 
+        Seq[Seq[String]]()
+      ))
+      merged(2) should be ((3, 
+        Seq(Seq("3", "a", "b"), Seq("3", "a", "b"), Seq("3", "a", "b"), Seq("3", "a", "b")), 
+        Seq(Seq("3", "a", "b"))
+      ))
     }
     
     "operate on slightly larger data" ignore {

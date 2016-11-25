@@ -12,39 +12,6 @@ import java.nio.file.Path
 import scalaz._, Scalaz._
 import scalaz.concurrent.Task
 
-sealed trait StreamOpsDsl[A]
-
-case class ValidateFile(filename: String, fileId: Int) extends StreamOpsDsl[(Int, Int)]
-
-object StreamOpsFree {
-
-  class Ops[S[_]](implicit s0: StreamOpsDsl :<: S) {
-    def validateFile(filename: String, fileId: Int): Free[S, (Int, Int)] = {
-      Free.liftF(s0.inj(ValidateFile(filename, fileId)))
-    }
-  }
-
-  object Ops {
-    implicit def apply[S[_]](implicit s0: StreamOpsDsl :<: S): Ops[S] = new Ops[S]
-  }
-}
-
-case class StreamOpsParams(targetDir: Path, mkPersistRF: Int => PersistRowFailures, 
-    errorThreshold: ErrorThreshold, fileChunkSizeBytes: Int = 4096, persistBatchSize: Int = 100)
-
-class StreamOpsInterpreter(params: StreamOpsParams) extends (StreamOpsDsl ~> Task) {
-
-  def apply[A](dsl: StreamOpsDsl[A]): Task[A] = {
-    
-    dsl match {
-      case ValidateFile(filename, fileId) => 
-        val validateFileOp = StreamOps.validateFile(params.targetDir, params.mkPersistRF, params.errorThreshold, 
-          params.fileChunkSizeBytes, params.persistBatchSize) _
-        validateFileOp(filename, fileId)
-    }
-  }
-}
-
 /**
  * This is a namespace for all stream operations related to file validation
  */
@@ -62,6 +29,45 @@ object StreamOps {
 
     // the runLast here discards the stream of valid data...
     fileValidator.runLast.map(_.map(_._1).getOrElse((0, 0)))
+  }
+
+  def validateFileKeepGood(targetDir: Path, mkPersistRF: Int => PersistRowFailures, errorThreshold: ErrorThreshold,
+      fileChunkSizeBytes: Int = 4096, persistBatchSize: Int = 100)
+      (filename: String, fileId: Int): Stream[Task, ((Int, Int), Seq[String])] = {
+
+    val bytes: Stream[Task, Byte] = io.file.readAll[Task](targetDir.resolve(filename), fileChunkSizeBytes)
+    bytes.through(validateFileBytes(filename, mkPersistRF(fileId), persistBatchSize, errorThreshold))
+  }
+
+  import fs2fv.MergeStreams._
+  import fs2fv.GroupKeys._
+
+  type R1 = (Int, Seq[Seq[String]])
+  type R2 = (Int, Seq[Seq[String]], Seq[Seq[String]])
+
+  def mergeTwo(validate: (String, Int) => Stream[Task, ((Int, Int), Seq[String])], 
+      first: (String, Int), second: (String, Int)): Stream[Task, R2] = {
+
+    val firstTagged = validate(first._1, first._2).through(keyed).through(groupKeys).map((1, _))
+    val secondTagged = validate(second._1, second._2).through(keyed).through(groupKeys).map((2, _))
+
+    implicit val groupOps = new GroupOps[R1, R2, Int] {
+      def emptyGroup(key: Int) = (key, Seq[Seq[String]]())
+      def keyOf(a: R1): Int = a._1
+      def outputFor(k: Int, as: Map[Int, Tagged[R1]]): R2 = (k, as(1).record._2, as(2).record._2)
+      def ordering: scala.math.Ordering[Int] = implicitly[scala.math.Ordering[Int]]
+    }
+
+    val joined = (firstTagged merge secondTagged).through(joinTagged(Set(1, 2)))
+    joined
+  }
+
+  // take a stream of (counts, tokens) and map to a stream of (key, tokens) by dropping the counts
+  // and turning the first token into an int
+  def keyed[F[_]]: Pipe[F, ((Int, Int), Seq[String]), (Int, Seq[String])] = in => {
+    in.map {
+      case (counts, tokens) => (tokens(0).toInt, tokens)
+    }
   }
 
   private def validateFileBytes(filename: String, 
