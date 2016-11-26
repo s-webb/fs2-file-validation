@@ -1,11 +1,14 @@
 name := "fs2fv"
 
+// without the SI-2712 fix, the :+: operator for combining interpreters doesn't work
 scalaVersion := "2.11.8"
+scalaOrganization in ThisBuild := "org.typelevel"
 
 scalacOptions ++= Seq(
   "-deprecation", 
   "-feature", 
-  "-language:higherKinds"
+  "-language:higherKinds",
+  "-Ypartial-unification"
 )
 
 val circeV = "0.5.0-M2"
@@ -27,7 +30,10 @@ libraryDependencies ++= Seq(
   "org.spire-math" %% "algebra" % "0.4.0",
   "co.fs2" %% "fs2-core" % fs2V,
   "co.fs2" %% "fs2-io" % fs2V,
-  "co.fs2" %% "fs2-scalaz" % "0.1.0"
+  "co.fs2" %% "fs2-scalaz" % "0.1.0",
+  "org.scalaz" %% "scalaz-core" % "7.2.6"
 )
 
 enablePlugins(JavaAppPackaging)
+
+addCompilerPlugin("org.spire-math" %% "kind-projector" % "0.9.2")
