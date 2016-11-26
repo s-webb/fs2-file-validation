@@ -70,13 +70,40 @@ In StreamThings, I've got a really clean implementation of validating and mergin
 
 Where to take it next?
 
- - Make the validation configurable (use a schema to specify the validation to apply to each input file)
- - Make the set of input streams configurable
- - Make the output transform configurable
- - Write the bad data for each input file to a separate output file
- - Tidy up the codebase to get rid of failed experiments
- - Incorporate logging to DB in my 'good' branch
- - Run this on some actual data
+ - [ ] Make the validation configurable (use a schema to specify the validation to apply to each input file)
+ - [ ] Make the set of input streams configurable
+ - [ ] Make the output transform configurable
+ - [ ] Write the bad data for each input file to a separate output file
+ - [x] Tidy up the codebase to get rid of failed experiments
+ - [ ] DB logging
+ - [ ] Run this on some actual data
 
 This all assumes a mode of operation where someone puts together a set of input files in a directory, then
 runs the code to produce a 'good' set of output files plus a set of discarded data.
+
+----
+
+So, let's say I had the following input files:
+
+inbound/
+  merge_a.csv
+  merge_b.csv
+  separate.csv
+
+And I want to produce:
+
+rejected/
+  merge_a.csv
+  merge_b.csv
+  separate.csv
+
+outbound/
+  merge.csv
+  separate.csv
+
+
+What do I need to change to make that happen?
+
+- [x] failure sink per inbound file
+- [ ] multiple runs of validate and merge (perhaps without the merge)
+- [ ] entry point

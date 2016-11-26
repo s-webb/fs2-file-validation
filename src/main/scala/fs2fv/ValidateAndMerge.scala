@@ -12,15 +12,13 @@ object ValidateAndMerge {
 
   val fileChunkSizeBytes = 100 * 1024
 
-  type RowFailure = (Int, String)
   type TokenizedLine = (Array[String], Int)
+  type RowFailure = (TokenizedLine, String)
   type Counts = (Int, Int)
   type CountsAndLine = (Counts, TokenizedLine)
   type KeyedLine = (Int, CountsAndLine)
   type KeyedLineGroup = (Int, Seq[CountsAndLine])
   type OutputRecord = (Int, Seq[Seq[CountsAndLine]])
-
-  type MkByteStream[F[_]] = () => Stream[F, Byte]
 
   implicit val groupOps = new GroupOps[KeyedLineGroup, OutputRecord, Int] {
     def emptyGroup(k: Int): KeyedLineGroup = (k, Seq[CountsAndLine]())
@@ -44,33 +42,44 @@ object ValidateAndMerge {
    */
   def validateAndMerge[F[_]](
       inFilenames: Seq[String], 
-      outFilename: String)(implicit 
+      outFilename: String,
+      rejectsDir: String)(implicit 
       ev1: Suspendable[F], 
       ev2: Async[F]): Stream[F, Seq[Int]] = {
 
-    // TODO - only question left here is how to construct the failure sink
-    val failureSink: Sink[F, RowFailure] = ???
-    val bytesOut: Sink[F, Byte] = writeOutput(Paths.get(outFilename))
-    val bytesIn: Seq[MkByteStream[F]] = inFilenames.map { n => () => readBytes[F](Paths.get(n)) }
+    val bytesOut: Sink[F, Byte] = io.file.writeAll(Paths.get(outFilename))
+    val unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])] = inFilenames.map { n => 
+      val inputPath = Paths.get(n)
+      val rejectsPath = Paths.get(rejectsDir).resolve(inputPath.getFileName)
+      val in = io.file.readAllAsync[F](inputPath, fileChunkSizeBytes)
 
-    validateAndMergeStreams(failureSink, bytesOut)(bytesIn)
+      val rej: Sink[F, RowFailure] = _.through(rowFailureToString).
+        through(text.utf8Encode[F]).
+        to(io.file.writeAll(rejectsPath))
+
+      (in, rej)
+    }
+
+    validateAndMergeStreams(bytesOut)(unvalidated)
   }
 
   /**
    * Similar to validateAndMerge, but allows various dependencies to be passed in (for testing).
    */
   def validateAndMergeStreams[F[_]](
-      failureSink: Sink[F, RowFailure],
       bytesOut: Sink[F, Byte])(
-      bytesIn: Seq[MkByteStream[F]])(implicit 
+      unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])]
+    )(implicit 
       ev1: Suspendable[F], 
       ev2: Async[F]): Stream[F, Seq[Int]] = {
 
     val outputSink: Sink[F, OutputRecord] = _.through(outputPipe).to(bytesOut)
 
-    collateByKey(bytesIn.map(_().through(validRecords(failureSink)))).
-      observe(outputSink).
-      through(countErrors(bytesIn.size))
+    val validated = unvalidated.map { case (inbound, rejects) =>
+      inbound.through(validRecords(rejects))
+    }
+
+    collateByKey(validated).observe(outputSink).through(countErrors(unvalidated.size))
   }
 
   def countErrors[F[_]](numInputs: Int): Pipe[F, OutputRecord, Seq[Int]] = in => {
@@ -88,10 +97,9 @@ object ValidateAndMerge {
     l1.zip(l2).map { case (a, b) => a max b }
 
   def outputPipe[F[_]]: Pipe[F, OutputRecord, Byte] =
-    _.through(toOutputLines).
+    _.through(outputRecordToString).
       intersperse("\n").
       through(text.utf8Encode[F])
-
 
   def validRecords[F[_]: Async](failureSink: Sink[F, RowFailure]): Pipe[F, Byte, KeyedLineGroup] = 
     _.through(toLines).
@@ -120,7 +128,7 @@ object ValidateAndMerge {
       if (tokens.size == 4) {
         Right(ln)
       } else {
-        Left((lineNum, "Wrong number of tokens"))
+        Left((ln, "Wrong number of tokens"))
       }
     }
 
@@ -160,19 +168,18 @@ object ValidateAndMerge {
     merged.through(joinTagged[F, KeyedLineGroup, OutputRecord, Int](tags))
   }
 
-  def toOutputLines[F[_]]: Pipe[F, OutputRecord, String] = 
+  def outputRecordToString[F[_]]: Pipe[F, OutputRecord, String] = 
     _.flatMap { case (key, ls) =>
       Stream(Seq(key.toString) ++ ls.flatten.map(countsAndLineToStr):_*)
+    }
+
+  def rowFailureToString[F[_]]: Pipe[F, RowFailure, String] =
+    _.map { case ((tokens, _), message) =>
+      (tokens + message).mkString("|")
     }
 
   def countsAndLineToStr(countsAndLine: CountsAndLine): String = {
     val (_, (ln, _)) = countsAndLine
     ln.mkString("|")
   }
-
-  def readBytes[F[_]: Suspendable](file: Path): Stream[F, Byte] =
-    io.file.readAll[F](file, fileChunkSizeBytes)
-
-  def writeOutput[F[_]: Suspendable](file: Path): Sink[F, Byte] =
-    io.file.writeAll(file)
 }
