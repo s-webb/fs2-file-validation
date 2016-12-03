@@ -82,6 +82,7 @@ class MergeStreamsSpec extends WordSpecLike with Matchers {
 
       val s1tagged = s1.through(groupKeys).map((1, _))
       val s2tagged = s2.through(groupKeys).map((2, _))
+
       val joined = (s1tagged merge s2tagged).through(joinTagged(Set(1, 2)))
 
       val rslt: Vector[Record2] = joined.runLog.unsafeRun

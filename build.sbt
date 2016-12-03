@@ -11,9 +11,9 @@ scalacOptions ++= Seq(
   "-Ypartial-unification"
 )
 
-val circeV = "0.5.0-M2"
+val circeV = "0.6.1"
 val doobieV = "0.3.0"
-val fs2V = "0.9.1"
+val fs2V = "0.9.2"
 
 libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "3.0.0-M14" % "test",
@@ -26,7 +26,9 @@ libraryDependencies ++= Seq(
   "org.tpolecat" %% "doobie-contrib-h2" % doobieV % "test",
   "org.tpolecat" %% "doobie-contrib-hikari" % doobieV % "test",
   "io.circe" %% "circe-core" % circeV,
+  "io.circe" %% "circe-generic" % circeV,
   "io.circe" %% "circe-jawn" % circeV,
+  "io.circe" %% "circe-parser" % circeV,
   "org.spire-math" %% "algebra" % "0.4.0",
   "co.fs2" %% "fs2-core" % fs2V,
   "co.fs2" %% "fs2-io" % fs2V,
