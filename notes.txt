@@ -90,6 +90,62 @@ inbound/
   merge_b.csv
   separate.csv
 
+And some config that says:
+
+[
+  {
+    "merge.csv": [
+      {
+        "name": "merge_a.csv",
+        "columns": [
+          {
+            "name": "col_a",
+            "max_width": 3,
+            "required": true
+          }, {
+            "name": "col_b",
+            "max_width": 5,
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "merge_b.csv",
+        "columns": [
+          {
+            "name": "col_a",
+            "max_width": 3,
+            "required": true
+          }, {
+            "name": "col_b",
+            "max_width": 5,
+            "required": false
+          }, {
+            "name": "col_c",
+            "max_width": 10,
+            "required": true
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "separate.csv": [
+      {
+        "name": "separate.csv",
+        "columns": [
+           {
+            "name": "col_a",
+            "max_width": 3,
+            "required": true
+          }   
+        ]
+      }
+    ]
+  }
+]
+
+
 And I want to produce:
 
 rejected/
@@ -107,3 +163,4 @@ What do I need to change to make that happen?
 - [x] failure sink per inbound file
 - [ ] multiple runs of validate and merge (perhaps without the merge)
 - [ ] entry point
+- [ ] parse the config (but do it hard-coded first?)

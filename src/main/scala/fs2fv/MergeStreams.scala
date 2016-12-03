@@ -45,6 +45,7 @@ object MergeStreams {
   def joinTagged[F[_], A, B, K](tags: Set[Int])(implicit ops: GroupOps[A, B, K]): Pipe[F, Tagged[A], B] = {
     def go(buff: Buff[A]): Handle[F, Tagged[A]] => Pull[F, B, Unit] = h => {
 
+      // can I rewrite this using receiveOption instead of receive1Option ?
       h.receive1Option {
         case Some((tagged, h)) =>
           val buff1 = addRecord(tagged, buff)

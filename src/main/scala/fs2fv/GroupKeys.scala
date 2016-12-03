@@ -7,6 +7,9 @@ object GroupKeys {
   /**
    * Pipe that groups adjacent elements in a stream by key, where each element in the output stream contains a Seq
    * of multiple elements from the input stream
+   *
+   * Chunkiness will be preserved to some extent, but the output will, depending on how many consecutive records
+   * have the same key, have smaller chunks than the input.
    */
   def groupKeys[F[_], A]: Pipe[F, (Int, A), (Int, Seq[A])] = {
 

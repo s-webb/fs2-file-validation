@@ -41,21 +41,21 @@ object ValidateAndMerge {
    * This is intended as the main entry point to the program.
    */
   def validateAndMerge[F[_]](
-      inFilenames: Seq[String], 
-      outFilename: String,
-      rejectsDir: String)(implicit 
+      inFilenames: Seq[Path], 
+      outFilename: Path,
+      rejectsDir: Path)(implicit 
       ev1: Suspendable[F], 
       ev2: Async[F]): Stream[F, Seq[Int]] = {
 
-    val bytesOut: Sink[F, Byte] = io.file.writeAll(Paths.get(outFilename))
-    val unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])] = inFilenames.map { n => 
-      val inputPath = Paths.get(n)
-      val rejectsPath = Paths.get(rejectsDir).resolve(inputPath.getFileName)
+    val bytesOut: Sink[F, Byte] = io.file.writeAll(outFilename)
+    val unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])] = inFilenames.map { inputPath => 
+      val rejectsPath = rejectsDir.resolve(inputPath.getFileName)
       val in = io.file.readAllAsync[F](inputPath, fileChunkSizeBytes)
 
       val rej: Sink[F, RowFailure] = _.through(rowFailureToString).
+        intersperse("\n").
         through(text.utf8Encode[F]).
-        to(io.file.writeAll(rejectsPath))
+        to(io.file.writeAllAsync(rejectsPath))
 
       (in, rej)
     }
@@ -125,7 +125,7 @@ object ValidateAndMerge {
 
   def rowValidator[F[_]]: Pipe[F, TokenizedLine, Either[RowFailure, TokenizedLine]] = 
     _.map { case ln@(tokens, lineNum) =>
-      if (tokens.size == 4) {
+      if (tokens.size == 3) {
         Right(ln)
       } else {
         Left((ln, "Wrong number of tokens"))
@@ -165,7 +165,8 @@ object ValidateAndMerge {
       withIndex.map { case (s, i) => s.map((i, _)) }
     val tags: Set[Int] = withIndex.map(_._2).toSet
     val merged: Stream[F, Tagged[KeyedLineGroup]] = tagged.reduce(_ merge _)
-    merged.through(joinTagged[F, KeyedLineGroup, OutputRecord, Int](tags))
+    // joinTagged will destroy any chunkiness left at this point, so reintroduce some prior to output
+    merged.through(joinTagged[F, KeyedLineGroup, OutputRecord, Int](tags)).rechunkN(100)
   }
 
   def outputRecordToString[F[_]]: Pipe[F, OutputRecord, String] = 
@@ -175,7 +176,7 @@ object ValidateAndMerge {
 
   def rowFailureToString[F[_]]: Pipe[F, RowFailure, String] =
     _.map { case ((tokens, _), message) =>
-      (tokens + message).mkString("|")
+      (tokens :+ message).mkString("|")
     }
 
   def countsAndLineToStr(countsAndLine: CountsAndLine): String = {
