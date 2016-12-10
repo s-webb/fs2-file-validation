@@ -31,7 +31,9 @@ libraryDependencies ++= Seq(
   "co.fs2" %% "fs2-core" % fs2V,
   "co.fs2" %% "fs2-io" % fs2V,
   "co.fs2" %% "fs2-scalaz" % "0.1.0",
-  "org.scalaz" %% "scalaz-core" % "7.2.6"
+  "org.scalaz" %% "scalaz-core" % "7.2.6",
+  "org.scalacheck" %% "scalacheck" % "1.13.4" % "test",
+  "junit" % "junit" % "4.12"
 )
 
 enablePlugins(JavaAppPackaging)

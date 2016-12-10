@@ -107,3 +107,10 @@ What do I need to change to make that happen?
 - [x] failure sink per inbound file
 - [ ] multiple runs of validate and merge (perhaps without the merge)
 - [ ] entry point
+
+----
+
+To write a spec for GroupKeys, what could I do?
+
+ - generate an inbound stream with an arbitrary number of chunks, where each chunk has an arbitrary length
+ - the outbound stream should have the same number of chunks
