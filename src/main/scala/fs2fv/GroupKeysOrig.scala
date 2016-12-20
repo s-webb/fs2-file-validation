@@ -2,7 +2,11 @@ package fs2fv
 
 import fs2._
 
-object GroupKeys {
+/**
+ * A copy of the version of GroupKeys that fails to preserve any chunkiness
+ * (and pushes a lot of data back to the input)
+ */
+object GroupKeysOrig {
 
   /**
    * Pipe that groups adjacent elements in a stream by key, where each element in the output stream contains a Seq
@@ -18,6 +22,7 @@ object GroupKeys {
 
       h.receiveOption { 
         case Some((chunk, h)) => 
+          println(s"Chunk size at group keys: ${chunk.size}")
           val (k1, out) = current.getOrElse((chunk(0)._1, Seq[A]()))
           doChunk(chunk, h, k1, out)
         case None => 
@@ -39,11 +44,11 @@ object GroupKeys {
         // and retain chunkiness
         var startIndex = 0
         var endIndex = differsAt
-        // while (differsAt != -1) {
+        while (differsAt != -1) {
           // I'd like to do chunk.indexWhere(startIndex, k != k1), but I don't have that form of indexWhere
           // I could make it
 
-        // }
+        }
         // would it help to turn the chunk into an array?
 
         // split the chunk into the bit where the keys match and the bit where they don't

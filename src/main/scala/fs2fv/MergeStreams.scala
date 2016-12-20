@@ -46,28 +46,9 @@ object MergeStreams {
     def go(buff: Buff[A]): Handle[F, Tagged[A]] => Pull[F, B, Unit] = h => {
 
       // can I rewrite this using receiveOption instead of receive1Option ?
-      // h.receive1Option {
-      //   case Some((tagged, h)) =>
-      //     val buff1 = addRecord(tagged, buff)
-      //     createOutputChecked(tags, buff1) match {
-      //       case Some((o, b)) =>
-      //         Pull.output1(o) >> go(b)(h)
-      //       case None =>
-      //         Pull.pure(()) >> go(buff1)(h)
-      //     }
-
-      //   case None if !buff.isEmpty =>
-      //     // output whatever we can from buff, then recurse
-      //     val (o, b) = createOutput(tags, buff)
-      //     Pull.output1(o) >> go(b)(h)
-
-      //   case None =>
-      //     Pull.done
-      // }
-
-      h.receiveOption {
+      h.receive1Option {
         case Some((tagged, h)) =>
-          val buff1 = addRecordChunk(tagged, buff)
+          val buff1 = addRecord(tagged, buff)
           createOutputChecked(tags, buff1) match {
             case Some((o, b)) =>
               Pull.output1(o) >> go(b)(h)
@@ -83,6 +64,25 @@ object MergeStreams {
         case None =>
           Pull.done
       }
+
+      // h.receiveOption {
+      //   case Some((tagged, h)) =>
+      //     val buff1 = addRecordChunk(tagged, buff)
+      //     createOutputChecked(tags, buff1) match {
+      //       case Some((o, b)) =>
+      //         Pull.output1(o) >> go(b)(h)
+      //       case None =>
+      //         Pull.pure(()) >> go(buff1)(h)
+      //     }
+
+      //   case None if !buff.isEmpty =>
+      //     // output whatever we can from buff, then recurse
+      //     val (o, b) = createOutput(tags, buff)
+      //     Pull.output1(o) >> go(b)(h)
+
+      //   case None =>
+      //     Pull.done
+      // }
     }
     in => in.pull(go(Buff.empty))
   }
@@ -93,25 +93,25 @@ object MergeStreams {
     buff + (t -> trs)
   }
 
-  def addRecordChunk[A](chunk: Chunk[Tagged[A]], buff: Buff[A]): Buff[A] = {
+  // def addRecordChunk[A](chunk: Chunk[Tagged[A]], buff: Buff[A]): Buff[A] = {
     // TODO can make use of the fact that consecutive records are likely to have the same tag
     // use an indexWhere to iterate over the chunk?
     // println(s"Add record chunk")
-    
-    if (chunk.isEmpty) buff else {
-      val t = chunk(0).tag
-      println(s"Adding records with tag $t, size: ${chunk.size}")
-      val trs = if (buff contains t) buff(t) ++ chunk.toVector else chunk.toVector
-      buff + (t -> trs)
 
-    }
+    // if (chunk.isEmpty) buff else {
+    //   val t = chunk(0).tag
+    //   println(s"Adding records with tag $t, size: ${chunk.size}")
+    //   val trs = if (buff contains t) buff(t) ++ chunk.toVector else chunk.toVector
+    //   buff + (t -> trs)
+    // }
+
     // chunk.foldLeft(buff) { (acc, tr) =>
     //   val t = tr.tag
     //   println(s"Adding record with tag $t")
     //   val trs = if (acc contains t) acc(t) :+ tr else Seq(tr)
     //   acc + (t -> trs)
     // }
-  }
+  // }
 
   def createOutputChecked[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Option[(B, Buff[A])] = {
     val allTagsBuffered = tags.forall(t => buff.get(t).map(!_.isEmpty).getOrElse(false))
