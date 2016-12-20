@@ -22,7 +22,6 @@ object GroupKeysOrig {
 
       h.receiveOption { 
         case Some((chunk, h)) => 
-          println(s"Chunk size at group keys: ${chunk.size}")
           val (k1, out) = current.getOrElse((chunk(0)._1, Seq[A]()))
           doChunk(chunk, h, k1, out)
         case None => 
@@ -44,11 +43,11 @@ object GroupKeysOrig {
         // and retain chunkiness
         var startIndex = 0
         var endIndex = differsAt
-        while (differsAt != -1) {
+        // while (differsAt != -1) {
           // I'd like to do chunk.indexWhere(startIndex, k != k1), but I don't have that form of indexWhere
           // I could make it
 
-        }
+        // }
         // would it help to turn the chunk into an array?
 
         // split the chunk into the bit where the keys match and the bit where they don't

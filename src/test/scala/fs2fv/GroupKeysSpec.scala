@@ -13,7 +13,7 @@ class GroupKeysSpec extends WordSpecLike with Matchers {
       val numInChunks = s.chunks.toVector.size
       val s2 = s.throughPure(groupKeys)
       val numOutChunks = s2.chunks.toVector.size
-      numOutChunks should be (numInChunks)
+      numOutChunks should be <= (numInChunks + 1)
       s2.toVector should be (Vector((1, Seq("A", "B")), (2, Seq("C")), (3, Seq("D"))))
     }
   }
