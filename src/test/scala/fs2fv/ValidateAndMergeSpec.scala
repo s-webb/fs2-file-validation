@@ -25,19 +25,19 @@ class ValidateAndMergeSpec extends Matchers with WordSpecLike {
       }
 
       val rawData = Seq(
-        """1|a1|b1|c1
-          |1|a2|b2|c2
+        """1|a1|b1
+          |1|a2|b2
           |1malformed
           |2malformed
-          |1|a3|b3|c3
-          |2|a1|b1|c1""".stripMargin,
-        """1|x1|y1|z1
-          |1|x2|y2|z2
-          |1|x3|y3|z3
+          |1|a3|b3
+          |2|a1|b1""".stripMargin,
+        """1|x1|y1
+          |1|x2|y2
+          |1|x3|y3
           |3malformed
           |4malformed
-          |1|x4|y4|z4
-          |3|x1|y1|z1""".stripMargin)
+          |1|x4|y4
+          |3|x1|y1""".stripMargin)
 
       val unvalidated: Seq[(Stream[Task, Byte], Sink[Task, RowFailure])] = 
         rawData.zipWithIndex.map { case (r, n) => 
@@ -64,17 +64,17 @@ class ValidateAndMergeSpec extends Matchers with WordSpecLike {
       ))
 
       val expectedOut = """1
-        |1|a1|b1|c1
-        |1|a2|b2|c2
-        |1|a3|b3|c3
-        |1|x1|y1|z1
-        |1|x2|y2|z2
-        |1|x3|y3|z3
-        |1|x4|y4|z4
+        |1|a1|b1
+        |1|a2|b2
+        |1|a3|b3
+        |1|x1|y1
+        |1|x2|y2
+        |1|x3|y3
+        |1|x4|y4
         |2
-        |2|a1|b1|c1
+        |2|a1|b1
         |3
-        |3|x1|y1|z1""".stripMargin
+        |3|x1|y1""".stripMargin
 
       outputBytes.toString should be (expectedOut)
     }

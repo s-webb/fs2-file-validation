@@ -10,7 +10,7 @@ import java.nio.file.{Path, Paths}
 
 object ValidateAndMerge {
 
-  val fileChunkSizeBytes = 100 * 1024
+  val fileChunkSizeBytes = 10 * 1024
 
   type TokenizedLine = (Array[String], Int)
   type RowFailure = (TokenizedLine, String)
@@ -84,6 +84,7 @@ object ValidateAndMerge {
 
   def countErrors[F[_]](numInputs: Int): Pipe[F, OutputRecord, Seq[Int]] = in => {
     val errCounts: Seq[Int] = (0 to numInputs).map(_ => 0)
+    println(s"Num inputs: " + numInputs)
     in.fold(errCounts) { case (acc, (_, rs)) =>
       val rsErrCounts: Seq[Int] = rs.map(maxForGroup)
       takeHighest(acc, rsErrCounts)
@@ -105,7 +106,7 @@ object ValidateAndMerge {
     _.through(toLines).
       through(validate(failureSink)).
       through(extractKey).
-      through(groupKeys)
+      through(groupKeys).rechunkN(3)
 
   def toLines[F[_]]: Pipe[F, Byte, TokenizedLine] = 
     _.through(text.utf8Decode).
@@ -166,7 +167,7 @@ object ValidateAndMerge {
     val tags: Set[Int] = withIndex.map(_._2).toSet
     val merged: Stream[F, Tagged[KeyedLineGroup]] = tagged.reduce(_ merge _)
     // joinTagged will destroy any chunkiness left at this point, so reintroduce some prior to output
-    merged.through(joinTagged[F, KeyedLineGroup, OutputRecord, Int](tags)).rechunkN(100)
+    merged.through(joinTagged[F, KeyedLineGroup, OutputRecord, Int](tags))
   }
 
   def outputRecordToString[F[_]]: Pipe[F, OutputRecord, String] = 

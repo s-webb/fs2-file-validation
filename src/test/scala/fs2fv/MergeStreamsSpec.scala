@@ -96,5 +96,32 @@ class MergeStreamsSpec extends WordSpecLike with Matchers {
       )
       rslt should be (expected)
     }
+    
+    "group chunked records" in {
+      val s1tagged: Stream[Task, (Int, (Int, Seq[String]))] = Stream(
+        (1, (1, Seq("1.1.a", "1.1.b"))), 
+        (1, (2, Seq("1.2.a", "1.2.b", "1.2.c")))
+      )
+      val s2tagged: Stream[Task, (Int, (Int, Seq[String]))] = Stream(
+        (2, (1, Seq("2.1.a", "2.1.b"))),
+        (2, (3, Seq("2.3.a", "2.3.b")))
+      )
+
+      implicit val S = fs2.Strategy.fromFixedDaemonPool(2, threadName = "worker")
+
+      val joined = (s1tagged merge s2tagged).through(joinTagged(Set(1, 2)))
+
+      val rslt: Vector[Record2] = joined.runLog.unsafeRun
+
+      val rsltStr: String = rslt.map(record2ToString).mkString("\n")
+      println(s"rslt:\n$rsltStr")
+
+      val expected: Vector[Record2] = Vector(
+        (1, Seq("1.1.a", "1.1.b"), Seq("2.1.a", "2.1.b")), 
+        (2, Seq("1.2.a", "1.2.b", "1.2.c"), Seq()),
+        (3, Seq(), Seq("2.3.a", "2.3.b"))
+      )
+      rslt should be (expected)
+    }
   }
 }

@@ -16,6 +16,8 @@ import scalaz.concurrent.Task
 
 object Main extends App {
 
+  println("Hit enter to begin")
+  System.console.readLine
   run(args(0))
 
   def run(workingDir: String) {
@@ -34,6 +36,8 @@ object Main extends App {
           }
           val after = System.currentTimeMillis
           println(s"Took ${after - before} millis")
+          println("Hit enter to end")
+          System.console.readLine
         }
       case Left(err) => throw new RuntimeException("fail")
     }
