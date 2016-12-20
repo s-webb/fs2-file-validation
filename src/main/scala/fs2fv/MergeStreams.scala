@@ -46,9 +46,28 @@ object MergeStreams {
     def go(buff: Buff[A]): Handle[F, Tagged[A]] => Pull[F, B, Unit] = h => {
 
       // can I rewrite this using receiveOption instead of receive1Option ?
-      h.receive1Option {
+      // h.receive1Option {
+      //   case Some((tagged, h)) =>
+      //     val buff1 = addRecord(tagged, buff)
+      //     createOutputChecked(tags, buff1) match {
+      //       case Some((o, b)) =>
+      //         Pull.output1(o) >> go(b)(h)
+      //       case None =>
+      //         Pull.pure(()) >> go(buff1)(h)
+      //     }
+
+      //   case None if !buff.isEmpty =>
+      //     // output whatever we can from buff, then recurse
+      //     val (o, b) = createOutput(tags, buff)
+      //     Pull.output1(o) >> go(b)(h)
+
+      //   case None =>
+      //     Pull.done
+      // }
+
+      h.receiveOption {
         case Some((tagged, h)) =>
-          val buff1 = addRecord(tagged, buff)
+          val buff1 = addRecordChunk(tagged, buff)
           createOutputChecked(tags, buff1) match {
             case Some((o, b)) =>
               Pull.output1(o) >> go(b)(h)
@@ -74,8 +93,28 @@ object MergeStreams {
     buff + (t -> trs)
   }
 
+  def addRecordChunk[A](chunk: Chunk[Tagged[A]], buff: Buff[A]): Buff[A] = {
+    // TODO can make use of the fact that consecutive records are likely to have the same tag
+    // use an indexWhere to iterate over the chunk?
+    // println(s"Add record chunk")
+    
+    if (chunk.isEmpty) buff else {
+      val t = chunk(0).tag
+      println(s"Adding records with tag $t, size: ${chunk.size}")
+      val trs = if (buff contains t) buff(t) ++ chunk.toVector else chunk.toVector
+      buff + (t -> trs)
+
+    }
+    // chunk.foldLeft(buff) { (acc, tr) =>
+    //   val t = tr.tag
+    //   println(s"Adding record with tag $t")
+    //   val trs = if (acc contains t) acc(t) :+ tr else Seq(tr)
+    //   acc + (t -> trs)
+    // }
+  }
+
   def createOutputChecked[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Option[(B, Buff[A])] = {
-    val allTagsBuffered = tags.forall(t => buff.get(t).map(_.size > 0).getOrElse(false))
+    val allTagsBuffered = tags.forall(t => buff.get(t).map(!_.isEmpty).getOrElse(false))
     if (allTagsBuffered) Some(createOutput(tags, buff)) else None
   }
 
@@ -93,7 +132,7 @@ object MergeStreams {
 
   def lowestKey[A, B, K](buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Tagged[A] = {
     val lowestRecs = lowestRecords(buff)
-    if (lowestRecs.size == 0) {
+    if (lowestRecs.isEmpty) {
       throw new RuntimeException("Can't find lowest key in a buffer that contains no records")
     } else {
       implicit val ord = ops.ordering
@@ -103,7 +142,7 @@ object MergeStreams {
 
   def entriesWithKey[A, B, K](k: K, buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Map[Int, Tagged[A]] = {
     val lowestRecs = lowestRecords(buff)
-    if (lowestRecs.size == 0) {
+    if (lowestRecs.isEmpty) {
       throw new RuntimeException("Can't find lowest key in a buffer that contains no records")
     } else {
       lowestRecs.filter(tr => ops.keyOf(tr.record) == k).map(tr => (tr.tag, tr)).toMap
@@ -112,7 +151,7 @@ object MergeStreams {
 
   def lowestRecords[A](buff: Buff[A]): Iterable[Tagged[A]] = {
     buff.values.flatMap { vs: Seq[Tagged[A]] => 
-      if (vs.size > 0) {
+      if (!vs.isEmpty) {
         Some(vs(0))
       } else None
     }
@@ -123,6 +162,6 @@ object MergeStreams {
       val shouldDrop = vs.headOption.map(tr => ops.keyOf(tr.record) == key).getOrElse(false)
       if (shouldDrop) vs.drop(1) else vs
     }
-    buff2.filter(_._2.size > 0)
+    buff2.filterNot(_._2.isEmpty)
   }
 }
