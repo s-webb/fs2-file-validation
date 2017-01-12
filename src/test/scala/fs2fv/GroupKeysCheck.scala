@@ -15,19 +15,12 @@ class GroupKeysCheck extends JUnitSuite with GeneratorDrivenPropertyChecks with 
   def testChunkiness(): Unit = {
     forAll(gen) { s1 =>
       val inChunks = s1.chunks.toVector
-      println(s"Num in chunks: ${inChunks.size}")
-      // inChunks.foreach(println)
       val s2 = s1.throughPure(groupKeys)
       val outChunks = s2.chunks.toVector
-      println(s"Num out chunks: ${outChunks.size}")
-      // outChunks.foreach(println)
       val numInChunks = inChunks.size
       val numOutChunks = s2.chunks.toVector.size
       val inValues: Vector[(Int, String)] = inChunks.map(_.toVector).flatten
       val outValues: Vector[(Int, String)] = outChunks.flatMap{_.toVector.flatMap{ case (k, vs) => vs.map(v => (k, v))}}
-      // println(s"in vals : ${inValues.mkString(",")}")
-      // println(s"out vals: ${outValues.mkString(",")}")
-      // (numInChunks == numOutChunks) :| "number of input chunks, $numInChunks, should equal number of output chunks, $numOutChunks"
       numOutChunks should be <= (numInChunks + 1)
       inValues should be (outValues)
     }
@@ -73,7 +66,6 @@ class GroupKeysCheck extends JUnitSuite with GeneratorDrivenPropertyChecks with 
       }._2
     }
 
-    // somehow I want to make sure chunk boundaries don't line up with key boundaries
     chunks.map(_.foldLeft(Stream[Nothing, (Int, String)]()) { (acc, c) =>
       acc.append(Stream.emits(c))
     })

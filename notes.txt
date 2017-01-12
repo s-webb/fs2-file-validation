@@ -171,3 +171,27 @@ To write a spec for GroupKeys, what could I do?
 
  - generate an inbound stream with an arbitrary number of chunks, where each chunk has an arbitrary length
  - the outbound stream should have the same number of chunks
+
+----
+
+Next up, some profiling / benchmarking on MergeStreams maybe?
+
+... adding a test to MergeStreamsSpec to look at chunkiness
+
+Looks like the chunkiness is a bit better, still need to:
+
+ - add scala check tests to make sure the implementation is correct
+ - add benchmarks to compare old and new
+
+From a very quick check, I appear to have made things slower :-)
+
+What the!? Profile?
+
+So, all the slowness was coming from the fact that the chunks going in to io.file.writeAllSync were tiny
+(7 bytes, 1 byte, 7 bytes ...). The chunkiness is lost when converting records to strings and interspersing newlines.
+
+Next steps...
+
+ - Maybe see if I can preserve chunkiness through the output conversion? The chunkiness exists going in to it.
+   If I can do that, then I can get rid of some 'rechunkN' calls.
+ - In profiling, a couple of functions in MergeStreams looked slow, see what can be done to improve those

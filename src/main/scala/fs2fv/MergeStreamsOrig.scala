@@ -2,7 +2,7 @@ package fs2fv
 
 import fs2._
 
-object MergeStreams {
+object MergeStreamsOrig {
 
   type Tagged[F] = (Int, F)
 
@@ -44,12 +44,14 @@ object MergeStreams {
    */
   def joinTagged[F[_], A, B, K](tags: Set[Int])(implicit ops: GroupOps[A, B, K]): Pipe[F, Tagged[A], B] = {
     def go(buff: Buff[A]): Handle[F, Tagged[A]] => Pull[F, B, Unit] = h => {
-      h.receiveOption {
+
+      // can I rewrite this using receiveOption instead of receive1Option ?
+      h.receive1Option {
         case Some((tagged, h)) =>
-          val buff1 = addRecordChunk(tagged, buff)
+          val buff1 = addRecord(tagged, buff)
           createOutputChecked(tags, buff1) match {
             case Some((o, b)) =>
-              Pull.output(Chunk.seq(o)) >> go(b)(h)
+              Pull.output1(o) >> go(b)(h)
             case None =>
               Pull.pure(()) >> go(buff1)(h)
           }
@@ -62,45 +64,58 @@ object MergeStreams {
         case None =>
           Pull.done
       }
+
+      // h.receiveOption {
+      //   case Some((tagged, h)) =>
+      //     val buff1 = addRecordChunk(tagged, buff)
+      //     createOutputChecked(tags, buff1) match {
+      //       case Some((o, b)) =>
+      //         Pull.output1(o) >> go(b)(h)
+      //       case None =>
+      //         Pull.pure(()) >> go(buff1)(h)
+      //     }
+
+      //   case None if !buff.isEmpty =>
+      //     // output whatever we can from buff, then recurse
+      //     val (o, b) = createOutput(tags, buff)
+      //     Pull.output1(o) >> go(b)(h)
+
+      //   case None =>
+      //     Pull.done
+      // }
     }
     in => in.pull(go(Buff.empty))
   }
 
-  // def addRecord[A](tr: Tagged[A], buff: Buff[A]): Buff[A] = {
-  //   val t = tr.tag
-  //   val trs = if (buff contains t) buff(t) :+ tr else Seq(tr)
-  //   buff + (t -> trs)
-  // }
-
-  def addRecordChunk[A](chunk: Chunk[Tagged[A]], buff: Buff[A]): Buff[A] = {
-    // all records in a chunk will have the same tag because they all come from the same inbound stream,
-    // so they can just be ++ to any existing entry for that tag
-    if (chunk.isEmpty) buff else {
-      val t0 = chunk(0)._1
-      chunk.indexWhere(_._1 != t0).foreach { d =>
-        val t = chunk(d)._1
-        throw new RuntimeException(s"All elements in chunk must have same tag, t0: $t0, t: $t")
-      }
-      // need to benchmark this, not sure what collection gives best perf for ++
-      val v = buff.get(t0).map(_ ++ chunk.toVector).getOrElse(chunk.toVector)
-      buff + (t0 -> v)
-    }
+  def addRecord[A](tr: Tagged[A], buff: Buff[A]): Buff[A] = {
+    val t = tr.tag
+    val trs = if (buff contains t) buff(t) :+ tr else Seq(tr)
+    buff + (t -> trs)
   }
 
-  def createOutputChecked[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): 
-      Option[(Seq[B], Buff[A])] = {
-    def allTagsBuffered(b: Buff[A]) = tags.forall(t => b.get(t).map(!_.isEmpty).getOrElse(false))
-    if (allTagsBuffered(buff)) {
-      // this is a bit of a mess :-)
-      var b1 = buff
-      var vv = Vector[B]()
-      while (allTagsBuffered(b1)) {
-        val (v, b2) = createOutput(tags, b1)
-        vv = (vv :+ v)
-        b1 = b2
-      }
-      Some((vv.toSeq), b1)
-    } else None
+  // def addRecordChunk[A](chunk: Chunk[Tagged[A]], buff: Buff[A]): Buff[A] = {
+    // TODO can make use of the fact that consecutive records are likely to have the same tag
+    // use an indexWhere to iterate over the chunk?
+    // println(s"Add record chunk")
+
+    // if (chunk.isEmpty) buff else {
+    //   val t = chunk(0).tag
+    //   println(s"Adding records with tag $t, size: ${chunk.size}")
+    //   val trs = if (buff contains t) buff(t) ++ chunk.toVector else chunk.toVector
+    //   buff + (t -> trs)
+    // }
+
+    // chunk.foldLeft(buff) { (acc, tr) =>
+    //   val t = tr.tag
+    //   println(s"Adding record with tag $t")
+    //   val trs = if (acc contains t) acc(t) :+ tr else Seq(tr)
+    //   acc + (t -> trs)
+    // }
+  // }
+
+  def createOutputChecked[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Option[(B, Buff[A])] = {
+    val allTagsBuffered = tags.forall(t => buff.get(t).map(!_.isEmpty).getOrElse(false))
+    if (allTagsBuffered) Some(createOutput(tags, buff)) else None
   }
 
   def createOutput[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): (B, Buff[A]) = {
@@ -142,8 +157,6 @@ object MergeStreams {
     }
   }
 
-  // this is a bit of a hotspot, could do with benchmarking it
-  // I'm sure it could be more efficient
   def removeRecordsWithKey[A, B, K](key: K, buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Buff[A] = {
     val buff2 = buff.mapValues { vs: Seq[Tagged[A]] =>
       val shouldDrop = vs.headOption.map(tr => ops.keyOf(tr.record) == key).getOrElse(false)
