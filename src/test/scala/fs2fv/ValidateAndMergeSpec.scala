@@ -74,9 +74,35 @@ class ValidateAndMergeSpec extends Matchers with WordSpecLike {
         |2
         |2|a1|b1
         |3
-        |3|x1|y1""".stripMargin
+        |3|x1|y1
+        |""".stripMargin
 
       outputBytes.toString should be (expectedOut)
+    }
+  }
+
+  "outputPipe" should {
+    "preserve chunkiness" in {
+      def mkRecord(key: Int): OutputRecord = {
+        (key, Seq( // 1 is the key
+          //  fails, passes    token 0,    token 1,     line num
+          Seq(((0, 0), (Array(s"1.$key.a", s"1.$key.b"), 1))), // group of values from first tagged stream
+          Seq(((0, 0), (Array(s"2.$key.a", s"2.$key.b"), 1))) // group of values from second tagged stream
+        ))
+      }
+      val os: Seq[Stream[Nothing, OutputRecord]] = 
+          (0 until 3).toSeq.map(_ * 5).map(n => Stream.emits((n until (n + 5)).map(mkRecord)))
+      val s1: Stream[Nothing, OutputRecord] = os.foldLeft(Stream.empty[Nothing, OutputRecord])(_ ++ _)
+
+      s1.chunks.toVector.size should equal(3)
+
+      val s2: Stream[Nothing, Byte] = s1.throughPure(outputPipe)
+      s2.chunks.toVector.map(bs => new String(bs.toArray)).foreach(println)
+      s2.chunks.toVector.size should equal(3)
+      // println(s.chunks.toVector.size)
+      // s.map(_._1).toVector.foreach(println)
+
+
     }
   }
 }

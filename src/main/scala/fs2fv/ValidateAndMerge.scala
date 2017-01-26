@@ -52,10 +52,12 @@ object ValidateAndMerge {
       val rejectsPath = rejectsDir.resolve(inputPath.getFileName)
       val in = io.file.readAllAsync[F](inputPath, fileChunkSizeBytes)
 
-      val rej: Sink[F, RowFailure] = _.through(rowFailureToString).
-        intersperse("\n").
-        through(text.utf8Encode[F]).
-        rechunkN(10 * 1024).
+      val rej: Sink[F, RowFailure] = 
+        // _.through(rowFailureToString).
+        // intersperse("\n").
+        // through(text.utf8Encode[F]).
+        // rechunkN(10 * 1024).
+        _.through(failuresToBytes).
         to(io.file.writeAllAsync(rejectsPath))
 
       (in, rej)
@@ -92,6 +94,12 @@ object ValidateAndMerge {
     }
   }
 
+  def failuresToBytes[F[_]]: Pipe[F, RowFailure, Byte] = 
+    _.through(rowFailureToString).
+      intersperse("\n").
+      through(text.utf8Encode[F]).
+      rechunkN(10 * 1024)
+
   private [fs2fv] def maxForGroup(group: Seq[CountsAndLine]): Int = 
     group.lastOption.map { case ((f, _), _) => f }.getOrElse(0)
 
@@ -100,9 +108,11 @@ object ValidateAndMerge {
 
   def outputPipe[F[_]]: Pipe[F, OutputRecord, Byte] =
     _.through(outputRecordToString).
-      intersperse("\n").
-      through(text.utf8Encode[F]).
-      rechunkN(10 * 1024) // rechunk into 10k blocks
+      // intersperse("\n").
+      // through(logChunkSize("a")).
+      through(text.utf8Encode[F]) //.
+      // through(logChunkSize("b"))
+      // rechunkN(10 * 1024) // rechunk into 10k blocks
         // .
       // through(logChunkSize)
 
@@ -181,9 +191,20 @@ object ValidateAndMerge {
 
   // I don't think this preserves chunkiness
   def outputRecordToString[F[_]]: Pipe[F, OutputRecord, String] = 
-    _.flatMap { case (key, ls) =>
-      Stream(Seq(key.toString) ++ ls.flatten.map(countsAndLineToStr):_*)
+    // _.flatMap { case (key, ls) =>
+    //   Stream(Seq(key.toString) ++ ls.flatten.map(countsAndLineToStr):_*)
+    // }
+    _.mapChunks { chunk =>
+      val keyStrs: Vector[String] =
+        chunk.toVector.map { case (key, tagGroups) =>
+          val gs = tagGroups.map(groupAsLine)
+          s"$key${gs(0)}${gs(1)}"
+        }
+      Chunk.singleton(keyStrs.mkString("\n") + "\n")
     }
+
+  def groupAsLine(group: Seq[CountsAndLine]): String =
+    if (group.isEmpty) "" else "\n" + group.map(countsAndLineToStr).mkString("\n") 
 
   def rowFailureToString[F[_]]: Pipe[F, RowFailure, String] =
     _.map { case ((tokens, _), message) =>

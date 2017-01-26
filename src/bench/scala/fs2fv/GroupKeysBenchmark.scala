@@ -2,7 +2,6 @@ import org.scalameter.api._
 
 import fs2._
 
-
 object GroupKeysBenchmark extends Bench.LocalTime {
 
   val sizes = Gen.range("size")(1000, 5000, 1000)

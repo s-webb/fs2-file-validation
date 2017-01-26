@@ -195,3 +195,54 @@ Next steps...
  - Maybe see if I can preserve chunkiness through the output conversion? The chunkiness exists going in to it.
    If I can do that, then I can get rid of some 'rechunkN' calls.
  - In profiling, a couple of functions in MergeStreams looked slow, see what can be done to improve those
+
+----
+
+Can I benchmark the output transform?
+
+Right. I think that's it then:
+
+➜  large git:(group-keys-bench) ✗ java -jar fs2fv-assembly-0.1-SNAPSHOT.jar.norechunk .
+Hit enter to begin
+
+Inbound file records-a-2016-07-21.txt had 491 errors
+Inbound file records-b-2016-07-21.txt had 491 errors
+Took 8416 millis
+Hit enter to end
+
+➜  large git:(group-keys-bench) ✗ java -jar fs2fv-assembly-0.1-SNAPSHOT.jar.withrechunk .
+Hit enter to begin
+
+Inbound file records-a-2016-07-21.txt had 491 errors
+Inbound file records-b-2016-07-21.txt had 491 errors
+Took 2492 millis
+Hit enter to end
+
+➜  large git:(group-keys-bench) ✗ java -jar fs2fv-assembly-0.1-SNAPSHOT.jar.new .
+Hit enter to begin
+
+Inbound file records-a-2016-07-21.txt had 491 errors
+Inbound file records-b-2016-07-21.txt had 491 errors
+Took 1408 millis
+Hit enter to end
+
+
+Rechunking into 10k blocks before the write to disk gave a significant speedup (over 3x), and then preserving
+chunkiness all the way through the pipe gave me another almost 2x.
+
+Chunkiness is really important.
+
+----
+
+Where are the bottlenecks now?
+
+ - lowestKey in MergeStreams seems to pop up a bit
+   - it's got an implicit lookup in it, is that a problem?
+
+ - the sampler reckons most of the CPU time was spent in createOutputChecked, start looking there
+ - benchmark and profile?
+
+Turns out removeRecordsWithKey was really slow. Switched to a mutable version and that part sped up 100x (according
+to the benchmark). Reduced overall execution time on 50MB data by 4x.
+
+If we can process 50MB in 15s, then we can do 200MB per min, 1GB in 5 min. Is that good enough?
