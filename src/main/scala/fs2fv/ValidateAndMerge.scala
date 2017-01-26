@@ -51,15 +51,7 @@ object ValidateAndMerge {
     val unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])] = inFilenames.map { inputPath => 
       val rejectsPath = rejectsDir.resolve(inputPath.getFileName)
       val in = io.file.readAllAsync[F](inputPath, fileChunkSizeBytes)
-
-      val rej: Sink[F, RowFailure] = 
-        // _.through(rowFailureToString).
-        // intersperse("\n").
-        // through(text.utf8Encode[F]).
-        // rechunkN(10 * 1024).
-        _.through(failuresToBytes).
-        to(io.file.writeAllAsync(rejectsPath))
-
+      val rej: Sink[F, RowFailure] = _.through(failuresToBytes).to(io.file.writeAllAsync(rejectsPath))
       (in, rej)
     }
 
@@ -82,7 +74,6 @@ object ValidateAndMerge {
       inbound.through(validRecords(rejects))
     }
 
-    // collateByKey(validated).through(logChunkSize("joined")).observe(outputSink).through(countErrors(unvalidated.size))
     collateByKey(validated).observe(outputSink).through(countErrors(unvalidated.size))
   }
 
@@ -108,18 +99,7 @@ object ValidateAndMerge {
 
   def outputPipe[F[_]]: Pipe[F, OutputRecord, Byte] =
     _.through(outputRecordToString).
-      // intersperse("\n").
-      // through(logChunkSize("a")).
-      through(text.utf8Encode[F]) //.
-      // through(logChunkSize("b"))
-      // rechunkN(10 * 1024) // rechunk into 10k blocks
-        // .
-      // through(logChunkSize)
-
-  def logChunkSize[F[_], A](label: String): Pipe[F, A, A] = _.mapChunks { c => 
-    println(s"chunk size for $label: ${c.size}")
-    c
-  }
+      through(text.utf8Encode[F])
 
   def validRecords[F[_]: Async](failureSink: Sink[F, RowFailure]): Pipe[F, Byte, KeyedLineGroup] = 
     _.through(toLines).
@@ -185,15 +165,10 @@ object ValidateAndMerge {
       withIndex.map { case (s, i) => s.map((i, _)) }
     val tags: Set[Int] = withIndex.map(_._2).toSet
     val merged: Stream[F, Tagged[KeyedLineGroup]] = tagged.reduce(_ merge _)
-    // joinTagged will destroy any chunkiness left at this point, so reintroduce some prior to output
     merged.through(joinTagged[F, KeyedLineGroup, OutputRecord, Int](tags))
   }
 
-  // I don't think this preserves chunkiness
   def outputRecordToString[F[_]]: Pipe[F, OutputRecord, String] = 
-    // _.flatMap { case (key, ls) =>
-    //   Stream(Seq(key.toString) ++ ls.flatten.map(countsAndLineToStr):_*)
-    // }
     _.mapChunks { chunk =>
       val keyStrs: Vector[String] =
         chunk.toVector.map { case (key, tagGroups) =>

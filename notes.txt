@@ -246,3 +246,9 @@ Turns out removeRecordsWithKey was really slow. Switched to a mutable version an
 to the benchmark). Reduced overall execution time on 50MB data by 4x.
 
 If we can process 50MB in 15s, then we can do 200MB per min, 1GB in 5 min. Is that good enough?
+
+----
+
+Yes.
+
+What features can I add?

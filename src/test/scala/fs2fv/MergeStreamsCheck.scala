@@ -28,7 +28,7 @@ class MergeStreamsCheck extends JUnitSuite with GeneratorDrivenPropertyChecks wi
       val lowestMaxKey = buffInfo.sortBy(_.max).head
       logger.debug(s"Lowest max key is: ${lowestMaxKey.printInfo}")
 
-      val out = createOutputChecked1(tagList.toSet, buff)(ops)
+      val out = createOutputChecked(tagList.toSet, buff)(ops)
 
       if (out.isDefined) {
         val (outRecs, outBuff) = out.get

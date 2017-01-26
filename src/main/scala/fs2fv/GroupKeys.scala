@@ -31,40 +31,22 @@ object GroupKeys {
 
       val differsAt = chunk.indexWhere(_._1 != k1).getOrElse(-1)
       if (differsAt == -1) {
-        // The whole chunk matches the current key, add this chunk to the current Stream of chunks
+        // whole chunk matches the current key, add this chunk to the current Stream of chunks
         val newOut: Seq[A] = out ++ chunk.toVector.map(_._2)
         if (acc.isEmpty) {
           Pull.pure(()) >> go(Some((k1, newOut)))(h)
         } else {
-          // can save the final chunk being unnecessarily split in two by looking at the next chunk every time
-          // doesn't seem like it's worth doing an extra push for every chunk to save having one additional chunk
-          /*
-          h.receiveOption {
-            case None =>
-              // we're done
-              Pull.output(Chunk.seq(acc :+ (k1, newOut))) >> Pull.done
-            case Some((c, h)) =>
-              // we're not!
-              Pull.output(Chunk.seq(acc)) >> go(Some((k1, newOut)))(h.push(c))
-          }
-          */
-          // this is the version that potentially outputs one additional chunk (by splitting the last one in two)
+          // potentially outputs one additional chunk (by splitting the last one in two)
           Pull.output(Chunk.seq(acc)) >> go(Some((k1, newOut)))(h)
         }
       } else {
-        // at least part of this chunk does not match the current key, I need to group
-        // and retain chunkiness
+        // at least part of this chunk does not match the current key, need to group and retain chunkiness
         var startIndex = 0
         var endIndex = differsAt
-        // while (differsAt != -1) {
-          // I'd like to do chunk.indexWhere(startIndex, k != k1), but I don't have that form of indexWhere
-          // I could make it
-
-        // }
-        // would it help to turn the chunk into an array?
 
         // split the chunk into the bit where the keys match and the bit where they don't
         val matching = chunk.take(differsAt)
+        // this could certainly be more efficient
         val newOut: Seq[A] = out ++ matching.toVector.map(_._2)
         val nonMatching = chunk.drop(differsAt)
         // nonMatching is guaranteed to be non-empty here, because we know the last element of the chunk doesn't have

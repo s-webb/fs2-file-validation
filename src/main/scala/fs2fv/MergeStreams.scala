@@ -48,8 +48,7 @@ object MergeStreams {
       h.receiveOption {
         case Some((tagged, h)) =>
           val buff1 = addRecordChunk(tagged, buff)
-          // switched in the optimised version
-          createOutputChecked1(tags, buff1) match {
+          createOutputChecked(tags, buff1) match {
             case Some((o, b)) =>
               Pull.output(Chunk.seq(o)) >> go(b)(h)
             case None =>
@@ -90,29 +89,6 @@ object MergeStreams {
   }
 
   def createOutputChecked[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): 
-      Option[(Seq[B], Buff[A])] = {
-    def allTagsBuffered(b: Buff[A]) = tags.forall(t => b.get(t).map(!_.isEmpty).getOrElse(false))
-    if (allTagsBuffered(buff)) {
-      // this is a bit of a mess :-)
-      var b1 = buff
-
-      // would this be any quicker if vv was a mutable collection?
-      // nope, if anything it runs more *slowly* on a mutable collection. pfft.
-      var vv = Vector[B]()
-      // could get some performance improvement here by splitting createOutput into two stages, one
-      // that builds up the output buffer, and a second that removes all of the keys that have been included
-      // in the output
-      while (allTagsBuffered(b1)) {
-        val (v, b2) = createOutput(tags, b1)
-        vv = (vv :+ v)
-        b1 = b2
-      }
-
-      Some((vv.toSeq), b1)
-    } else None
-  }
-
-  def createOutputChecked1[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): 
       Option[(Seq[B], Buff[A])] = {
 
     if (buff.keySet == tags) {
@@ -165,58 +141,6 @@ object MergeStreams {
     } else None
   }
 
-  // pseudo-code for quicker createOutputChecked
-  //
-  // create an array storing curr index into each tag's buffer (start at 0 :-)
-  // get the size of each tag buffer, store that in an array (to save repeatedly calling size)
-  // loop
-  //   if any of the curr indices is out of bounds, break
-  //   get the curr indexed value from each tag buffer
-  //   find the lowest of those values
-  //   create an output record containing lowest values
-  //   pad the output record for any tags where their current value doesn't match the lowest value
-  //   for all where curr value == lowest value, increment curr index
-  // split all of the tag buffers at curr index 
-  // wrap the new buffers into a map and return that and the output buffer
-  //
-  // A: 1, 2, 3
-  // B: 1, 2
-  //
-  // 0, 0: 1, 1 are output
-  // 1, 1: 2, 2 are output
-  // 2, 2: curr index out of bounds on B, break
-  //
-  // A: 1, 4
-  // B: 1, 2, 3
-  //
-  // 0, 0: 1, 1 are output
-  // 1, 1: -, 2 are output
-  // 1, 2: -, 3 are output
-  // 1, 3: curr index out of bounds on B, break
-  //
-  // A: 1, 4
-  // B: 1, 2, 5
-  //
-  // 0, 0: 1, 1 are output
-  // 1, 1: -, 2 are output
-  // 1, 2: 4, - are output
-  // 2, 2: curr index out of bounds on A, break
-  //
-  // A: 1, 4
-  // B: 1, 2, 5
-  // C: 1, 3
-  //
-  // 0, 0, 0: 1, 1, 1 are output
-  // 1, 1, 1: -, -, 3 are output
-  // 1, 1, 2: curr index out of bounds on C, break
-  //
-  // A: 1, 2
-  // B: 1, 2, 5
-  // C: 1, 3
-  //
-  // 0, 0, 0: 1, 1, 1 are output
-  // 1, 1, 1: -, -, 3 are output
-
   def createOutput[A, B, K](tags: Set[Int], buff: Buff[A])(implicit ops: GroupOps[A, B, K]): (B, Buff[A]) = {
     val lowest: K = ops.keyOf(lowestKey(buff).record)
     val entriesForOutput = entriesWithKey(lowest, buff)
@@ -256,29 +180,19 @@ object MergeStreams {
     }
   }
 
-  // this is a bit of a hotspot, could do with benchmarking it
-  // I'm sure it could be more efficient
   def removeRecordsWithKey[A, B, K](key: K, buff: Buff[A])(implicit ops: GroupOps[A, B, K]): Buff[A] = {
-     // val buff2 = buff.mapValues { vs: Seq[Tagged[A]] =>
-     //   val shouldDrop = vs.headOption.map(tr => ops.keyOf(tr.record) == key).getOrElse(false)
-     //   if (shouldDrop) vs.drop(1) else vs
-     // }
-     // buff2.filterNot(_._2.isEmpty)
-    
-    
-    // this might be quicker... ?
-    val buff2 = mutable.Map[Int, Seq[Tagged[A]]]()
+    val out = mutable.Map[Int, Seq[Tagged[A]]]()
     buff.foreach { case (k, vs: Seq[Tagged[A]]) =>
       if (!vs.isEmpty) {
         if (ops.keyOf(vs(0).record) == key) {
           if (vs.size > 1) {
-            buff2 += (k -> vs.drop(1))
+            out += (k -> vs.drop(1))
           }
         } else {
-          buff2 += (k -> vs)
+          out += (k -> vs)
         }
       }
     }
-    buff2.toMap
+    out.toMap
   }
 }

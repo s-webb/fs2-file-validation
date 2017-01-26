@@ -15,8 +15,8 @@ object MergeStreamsBenchmark extends Bench.LocalTime {
     }
     def ordering: Ordering[Int] = implicitly[Ordering[Int]]
   }
+
   val tags = Set(1, 2)
-  // val numKeysPerStream = 10
   val numTokensPerKey = 10
 
   val numKeysPerStream = Gen.range("numKeysPerStream")(10000, 30000, 10000)
@@ -38,16 +38,7 @@ object MergeStreamsBenchmark extends Bench.LocalTime {
     measure method "createOutputChecked" in {
       using(buffs) in {
         buff => {
-          // Do I need to keep running this until the stream is exhausted?
-          // it does it in one pass anyway, tbh
           createOutputChecked[(Int, Seq[String]), String, Int](tags, buff)(ops)
-        }
-      }
-    }
-    measure method "createOutputChecked1" in {
-      using(buffs) in {
-        buff => {
-          createOutputChecked1[(Int, Seq[String]), String, Int](tags, buff)(ops)
         }
       }
     }
