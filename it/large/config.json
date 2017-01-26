@@ -1,10 +1,49 @@
-[
-  {
-    "id": "records-a", 
-    "name-pattern": "'records-a'-yyyy-MM-dd'.txt'"
-  },
-  { 
-    "id": "records-b",
-    "name-pattern": "'records-b'-yyyy-MM-dd'.txt'"
-  }
-]
+{
+  "output" : [
+    {
+      "name" : "records-2016-07-21.txt",
+      "inputs" : [
+        {
+          "name" : "records-a-2016-07-21.txt",
+          "columns" : [
+            {
+              "name" : "a_col_a",
+              "maxWidth" : 1,
+              "required" : true
+            },
+            {
+              "name" : "a_col_b",
+              "maxWidth" : 1,
+              "required" : true
+            },
+            {
+              "name" : "a_col_c",
+              "maxWidth" : 1,
+              "required" : true
+            }
+          ]
+        },
+        {
+          "name" : "records-b-2016-07-21.txt",
+          "columns" : [
+            {
+              "name" : "b_col_a",
+              "maxWidth" : 1,
+              "required" : true
+            },
+            {
+              "name" : "b_col_b",
+              "maxWidth" : 1,
+              "required" : true
+            },
+            {
+              "name" : "b_col_c",
+              "maxWidth" : 1,
+              "required" : true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,2 +1,4 @@
 target
 *~
+/it/large/output/*
+/it/large/rejects/*

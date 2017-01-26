@@ -90,6 +90,62 @@ inbound/
   merge_b.csv
   separate.csv
 
+And some config that says:
+
+[
+  {
+    "merge.csv": [
+      {
+        "name": "merge_a.csv",
+        "columns": [
+          {
+            "name": "col_a",
+            "max_width": 3,
+            "required": true
+          }, {
+            "name": "col_b",
+            "max_width": 5,
+            "required": false
+          }
+        ]
+      },
+      {
+        "name": "merge_b.csv",
+        "columns": [
+          {
+            "name": "col_a",
+            "max_width": 3,
+            "required": true
+          }, {
+            "name": "col_b",
+            "max_width": 5,
+            "required": false
+          }, {
+            "name": "col_c",
+            "max_width": 10,
+            "required": true
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "separate.csv": [
+      {
+        "name": "separate.csv",
+        "columns": [
+           {
+            "name": "col_a",
+            "max_width": 3,
+            "required": true
+          }   
+        ]
+      }
+    ]
+  }
+]
+
+
 And I want to produce:
 
 rejected/
@@ -107,3 +163,86 @@ What do I need to change to make that happen?
 - [x] failure sink per inbound file
 - [ ] multiple runs of validate and merge (perhaps without the merge)
 - [ ] entry point
+- [ ] parse the config (but do it hard-coded first?)
+
+----
+
+To write a spec for GroupKeys, what could I do?
+
+ - generate an inbound stream with an arbitrary number of chunks, where each chunk has an arbitrary length
+ - the outbound stream should have the same number of chunks
+
+----
+
+Next up, some profiling / benchmarking on MergeStreams maybe?
+
+... adding a test to MergeStreamsSpec to look at chunkiness
+
+Looks like the chunkiness is a bit better, still need to:
+
+ - add scala check tests to make sure the implementation is correct
+ - add benchmarks to compare old and new
+
+From a very quick check, I appear to have made things slower :-)
+
+What the!? Profile?
+
+So, all the slowness was coming from the fact that the chunks going in to io.file.writeAllSync were tiny
+(7 bytes, 1 byte, 7 bytes ...). The chunkiness is lost when converting records to strings and interspersing newlines.
+
+Next steps...
+
+ - Maybe see if I can preserve chunkiness through the output conversion? The chunkiness exists going in to it.
+   If I can do that, then I can get rid of some 'rechunkN' calls.
+ - In profiling, a couple of functions in MergeStreams looked slow, see what can be done to improve those
+
+----
+
+Can I benchmark the output transform?
+
+Right. I think that's it then:
+
+➜  large git:(group-keys-bench) ✗ java -jar fs2fv-assembly-0.1-SNAPSHOT.jar.norechunk .
+Hit enter to begin
+
+Inbound file records-a-2016-07-21.txt had 491 errors
+Inbound file records-b-2016-07-21.txt had 491 errors
+Took 8416 millis
+Hit enter to end
+
+➜  large git:(group-keys-bench) ✗ java -jar fs2fv-assembly-0.1-SNAPSHOT.jar.withrechunk .
+Hit enter to begin
+
+Inbound file records-a-2016-07-21.txt had 491 errors
+Inbound file records-b-2016-07-21.txt had 491 errors
+Took 2492 millis
+Hit enter to end
+
+➜  large git:(group-keys-bench) ✗ java -jar fs2fv-assembly-0.1-SNAPSHOT.jar.new .
+Hit enter to begin
+
+Inbound file records-a-2016-07-21.txt had 491 errors
+Inbound file records-b-2016-07-21.txt had 491 errors
+Took 1408 millis
+Hit enter to end
+
+
+Rechunking into 10k blocks before the write to disk gave a significant speedup (over 3x), and then preserving
+chunkiness all the way through the pipe gave me another almost 2x.
+
+Chunkiness is really important.
+
+----
+
+Where are the bottlenecks now?
+
+ - lowestKey in MergeStreams seems to pop up a bit
+   - it's got an implicit lookup in it, is that a problem?
+
+ - the sampler reckons most of the CPU time was spent in createOutputChecked, start looking there
+ - benchmark and profile?
+
+Turns out removeRecordsWithKey was really slow. Switched to a mutable version and that part sped up 100x (according
+to the benchmark). Reduced overall execution time on 50MB data by 4x.
+
+If we can process 50MB in 15s, then we can do 200MB per min, 1GB in 5 min. Is that good enough?
