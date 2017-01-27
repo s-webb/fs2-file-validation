@@ -8,18 +8,15 @@
           "columns" : [
             {
               "name" : "a_col_a",
-              "maxWidth" : 1,
-              "required" : true
+              "pattern": "\\d+"
             },
             {
               "name" : "a_col_b",
-              "maxWidth" : 1,
-              "required" : true
+              "pattern": "[^A-D]{1}"
             },
             {
               "name" : "a_col_c",
-              "maxWidth" : 1,
-              "required" : true
+              "pattern": ".{1}"
             }
           ]
         },
@@ -28,18 +25,15 @@
           "columns" : [
             {
               "name" : "b_col_a",
-              "maxWidth" : 1,
-              "required" : true
+              "pattern": "\\d+"
             },
             {
               "name" : "b_col_b",
-              "maxWidth" : 1,
-              "required" : true
+              "pattern": ".{1}"
             },
             {
               "name" : "b_col_c",
-              "maxWidth" : 1,
-              "required" : true
+              "pattern": ".{1}"
             }
           ]
         }

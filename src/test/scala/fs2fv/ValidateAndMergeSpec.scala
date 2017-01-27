@@ -39,28 +39,31 @@ class ValidateAndMergeSpec extends Matchers with WordSpecLike {
           |1|x4|y4
           |3|x1|y1""".stripMargin)
 
-      val unvalidated: Seq[(Stream[Task, Byte], Sink[Task, RowFailure])] = 
+      val unvalidated: Seq[(Stream[Task, Byte], Sink[Task, RowFailure], RowValidator[Task])] = 
         rawData.zipWithIndex.map { case (r, n) => 
           val in = Stream[Task, Byte](r.getBytes:_*)
           val rejects: Sink[Task, RowFailure] = _.map(failures(n) += _)
-          (in, rejects)
+          (in, rejects, rowValidator[Task])
         }
 
       val resultS: Stream[Task, Seq[Int]] = validateAndMergeStreams(outputSink)(unvalidated)
       val result: Vector[Seq[Int]] = resultS.runLog.unsafePerformSync
       result should be (Seq(Seq(2, 2)))
 
-      def failureToStr(rf: RowFailure): String = rf match {
-        case ((tokens, lineNum), message) => (tokens.toSeq :+ message).mkString("|")
+      def failureToStr(rf: RowFailure): Seq[String] = rf match {
+        case ((tokens, lineNum), messages) => 
+          messages.map { message =>
+            (tokens.toSeq :+ message).mkString("|")
+          }
       }
 
-      failures(0).map(failureToStr) should be (Seq(
-        "1malformed|Wrong number of tokens", 
-        "2malformed|Wrong number of tokens"
+      failures(0).map(failureToStr).toSeq should be (Seq(
+        Seq("1malformed|Wrong number of tokens"), 
+        Seq("2malformed|Wrong number of tokens")
       ))
-      failures(1).map(failureToStr) should be (Seq(
-        "3malformed|Wrong number of tokens", 
-        "4malformed|Wrong number of tokens"
+      failures(1).map(failureToStr).toSeq should be (Seq(
+        Seq("3malformed|Wrong number of tokens"), 
+        Seq("4malformed|Wrong number of tokens")
       ))
 
       val expectedOut = """1
@@ -99,10 +102,15 @@ class ValidateAndMergeSpec extends Matchers with WordSpecLike {
       val s2: Stream[Nothing, Byte] = s1.throughPure(outputPipe)
       s2.chunks.toVector.map(bs => new String(bs.toArray)).foreach(println)
       s2.chunks.toVector.size should equal(3)
-      // println(s.chunks.toVector.size)
-      // s.map(_._1).toVector.foreach(println)
-
-
     }
   }
+
+  def rowValidator[F[_]]: Pipe[F, TokenizedLine, Either[RowFailure, TokenizedLine]] = 
+    _.map { case ln@(tokens, linenum) =>
+      if (tokens.size == 3) {
+        Right(ln)
+      } else {
+        Left((ln, Seq("Wrong number of tokens")))
+      }
+    }
 }

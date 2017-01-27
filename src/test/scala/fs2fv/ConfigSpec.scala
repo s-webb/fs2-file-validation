@@ -5,6 +5,8 @@ import io.circe.generic.auto._
 import io.circe.parser._
 import io.circe.syntax._
 
+import java.util.regex.Pattern
+
 import org.scalatest.{Matchers, WordSpecLike}
 
 class ConfigSpec extends WordSpecLike with Matchers {
@@ -19,8 +21,7 @@ class ConfigSpec extends WordSpecLike with Matchers {
       |          "columns" : [
       |            {
       |              "name" : "a_col_a",
-      |              "maxWidth" : 10,
-      |              "required" : true
+      |              "pattern" : ".{1,10}"
       |            }
       |          ]
       |        },
@@ -29,8 +30,7 @@ class ConfigSpec extends WordSpecLike with Matchers {
       |          "columns" : [
       |            {
       |              "name" : "b_col_a",
-      |              "maxWidth" : 5,
-      |              "required" : false
+      |              "pattern" : ".{0,5}"
       |            }
       |          ]
       |        }
@@ -44,10 +44,10 @@ class ConfigSpec extends WordSpecLike with Matchers {
       val c = Config(List(
         Output("merge.csv", List(
           Input("merge_a.csv", List(
-              Column("a_col_a", 10, true)
+              Column("a_col_a", ".{1,10}")
           )),
           Input("merge_b.csv", List(
-            Column("b_col_a", 5, false)
+            Column("b_col_a", ".{0,5}")
           ))
         ))
       ))

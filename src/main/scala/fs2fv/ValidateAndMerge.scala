@@ -13,12 +13,13 @@ object ValidateAndMerge {
   val fileChunkSizeBytes = 10 * 1024
 
   type TokenizedLine = (Array[String], Int)
-  type RowFailure = (TokenizedLine, String)
+  type RowFailure = (TokenizedLine, Seq[String])
   type Counts = (Int, Int)
   type CountsAndLine = (Counts, TokenizedLine)
   type KeyedLine = (Int, CountsAndLine)
   type KeyedLineGroup = (Int, Seq[CountsAndLine])
   type OutputRecord = (Int, Seq[Seq[CountsAndLine]])
+  type RowValidator[F[_]] = Pipe[F, TokenizedLine, Either[RowFailure, TokenizedLine]]
 
   implicit val groupOps = new GroupOps[KeyedLineGroup, OutputRecord, Int] {
     def emptyGroup(k: Int): KeyedLineGroup = (k, Seq[CountsAndLine]())
@@ -41,19 +42,20 @@ object ValidateAndMerge {
    * This is intended as the main entry point to the program.
    */
   def validateAndMerge[F[_]](
-      inFilenames: Seq[Path], 
+      inFilenames: Seq[(Path, RowValidator[F])], 
       outFilename: Path,
       rejectsDir: Path)(implicit 
       ev1: Suspendable[F], 
       ev2: Async[F]): Stream[F, Seq[Int]] = {
 
     val bytesOut: Sink[F, Byte] = io.file.writeAllAsync(outFilename)
-    val unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])] = inFilenames.map { inputPath => 
-      val rejectsPath = rejectsDir.resolve(inputPath.getFileName)
-      val in = io.file.readAllAsync[F](inputPath, fileChunkSizeBytes)
-      val rej: Sink[F, RowFailure] = _.through(failuresToBytes).to(io.file.writeAllAsync(rejectsPath))
-      (in, rej)
-    }
+    val unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure], RowValidator[F])] = 
+        inFilenames.map { case (inputPath, rv) => 
+          val rejectsPath = rejectsDir.resolve(inputPath.getFileName)
+          val in = io.file.readAllAsync[F](inputPath, fileChunkSizeBytes)
+          val rej: Sink[F, RowFailure] = _.through(failuresToBytes).to(io.file.writeAllAsync(rejectsPath))
+          (in, rej, rv)
+        }
 
     validateAndMergeStreams(bytesOut)(unvalidated)
   }
@@ -63,15 +65,15 @@ object ValidateAndMerge {
    */
   def validateAndMergeStreams[F[_]](
       bytesOut: Sink[F, Byte])(
-      unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure])]
+      unvalidated: Seq[(Stream[F, Byte], Sink[F, RowFailure], RowValidator[F])]
     )(implicit 
       ev1: Suspendable[F], 
       ev2: Async[F]): Stream[F, Seq[Int]] = {
 
     val outputSink: Sink[F, OutputRecord] = _.through(outputPipe).to(bytesOut)
 
-    val validated = unvalidated.map { case (inbound, rejects) =>
-      inbound.through(validRecords(rejects))
+    val validated = unvalidated.map { case (inbound, rejects, rv) =>
+      inbound.through(validRecords(rejects, rv))
     }
 
     collateByKey(validated).observe(outputSink).through(countErrors(unvalidated.size))
@@ -101,9 +103,10 @@ object ValidateAndMerge {
     _.through(outputRecordToString).
       through(text.utf8Encode[F])
 
-  def validRecords[F[_]: Async](failureSink: Sink[F, RowFailure]): Pipe[F, Byte, KeyedLineGroup] = 
+  def validRecords[F[_]: Async](failureSink: Sink[F, RowFailure], rowValidator: RowValidator[F]): 
+      Pipe[F, Byte, KeyedLineGroup] = 
     _.through(toLines).
-      through(validate(failureSink)).
+      through(validate(failureSink, rowValidator)).
       through(extractKey).
       through(groupKeys)
 
@@ -113,7 +116,8 @@ object ValidateAndMerge {
       map(_.split('|')).
       zipWithIndex
 
-  def validate[F[_]: Async](failureSink: Sink[F, RowFailure]): Pipe[F, TokenizedLine, CountsAndLine] = in => {
+  def validate[F[_]: Async](failureSink: Sink[F, RowFailure], rowValidator: RowValidator[F]): 
+      Pipe[F, TokenizedLine, CountsAndLine] = in => {
     in.through(rowValidator).
       observe(adaptSink(failureSink)).
       through(countsAndPasses).
@@ -122,15 +126,6 @@ object ValidateAndMerge {
 
   def adaptSink[F[_]](failureSink: Sink[F, RowFailure]): Sink[F, Either[RowFailure, TokenizedLine]] = 
     _.collect { case Left(f) => f }.to(failureSink)
-
-  def rowValidator[F[_]]: Pipe[F, TokenizedLine, Either[RowFailure, TokenizedLine]] = 
-    _.map { case ln@(tokens, lineNum) =>
-      if (tokens.size == 3) {
-        Right(ln)
-      } else {
-        Left((ln, "Wrong number of tokens"))
-      }
-    }
 
   def tooManyErrors(cs: Counts): Boolean = {
     val (f, p) = cs
@@ -181,9 +176,13 @@ object ValidateAndMerge {
   def groupAsLine(group: Seq[CountsAndLine]): String =
     if (group.isEmpty) "" else "\n" + group.map(countsAndLineToStr).mkString("\n") 
 
+  // this is a bottleneck, if there are a few failures
   def rowFailureToString[F[_]]: Pipe[F, RowFailure, String] =
-    _.map { case ((tokens, _), message) =>
-      (tokens :+ message).mkString("|")
+    _.flatMap { case ((tokens, _), messages) =>
+      val s = messages.map { message =>
+        (tokens :+ message).mkString("|")
+      }
+      Stream(s:_*)
     }
 
   def countsAndLineToStr(countsAndLine: CountsAndLine): String = {

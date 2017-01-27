@@ -2,7 +2,8 @@ package fs2fv
 
 import fs2.interop.scalaz._
 
-import fs2fv.ValidateAndMerge._
+import fs2fv.ValidateAndMerge.{validateAndMerge, RowValidator}
+import fs2fv.RowValidator.rowValidator
 
 import io.circe._
 import io.circe.generic.auto._
@@ -61,7 +62,11 @@ object Main extends App {
   }
 
   def generate(workingDir: Path, conf: Output): Task[Seq[Int]] = {
-    val in = conf.inputs.map(i => workingDir.resolve("staging/" + i.name))
+    val in: Seq[(Path, RowValidator[Task])] = conf.inputs.map { i => 
+      val p = workingDir.resolve("staging/" + i.name)
+      val rv = rowValidator[Task](i)
+      (p, rv)
+    }
     val out = workingDir.resolve("output/" + conf.name)
     out.toFile.getParentFile.mkdirs()
     val rejects = workingDir.resolve("rejects")
