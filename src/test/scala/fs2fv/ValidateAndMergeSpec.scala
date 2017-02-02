@@ -105,6 +105,31 @@ class ValidateAndMergeSpec extends Matchers with WordSpecLike {
     }
   }
 
+  "failuresToBytes" should {
+    "preserve chunkiness" in {
+      val key = 1
+      val fs1: Seq[RowFailure] = Seq(
+        ((Array(s"1a", s"1b"), 1), Seq[String]("fail")),
+        ((Array(s"2a", s"2b"), 2), Seq[String]("fail"))
+      )
+      val fs2: Seq[RowFailure] = Seq(
+        ((Array(s"3a", s"3b"), 3), Seq[String]("fail")),
+        ((Array(s"4a", s"4b"), 4), Seq[String]("fail"))
+      )
+      val s: Stream[Nothing, RowFailure] = Stream.emits(fs1) ++ Stream.emits(fs2)
+      s.chunks.toVector should have size 2
+      val s2 = s.throughPure(failuresToBytes)
+      val rslt = new String(s2.toVector.toArray)
+      val expected = """1a|1b|fail
+          |2a|2b|fail
+          |3a|3b|fail
+          |4a|4b|fail
+          |""".stripMargin
+      rslt should be (expected)
+      s2.chunks.toVector should have size 2
+    }
+  }
+
   def rowValidator[F[_]]: Pipe[F, TokenizedLine, Either[RowFailure, TokenizedLine]] = 
     _.map { case ln@(tokens, linenum) =>
       if (tokens.size == 3) {

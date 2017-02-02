@@ -29,7 +29,7 @@
             },
             {
               "name" : "b_col_b",
-              "pattern": ".{1}"
+              "pattern": "[^A-D]{1}"
             },
             {
               "name" : "b_col_c",

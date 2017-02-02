@@ -2,7 +2,8 @@ lazy val Benchmark = config("bench") extend Test
 
 val circeV = "0.6.1"
 val doobieV = "0.3.0a"
-val fs2V = "0.9.2"
+// val fs2V = "0.9.2"
+val fs2V = "1.0.0-SNAPSHOT"
 
 enablePlugins(JavaAppPackaging)
 

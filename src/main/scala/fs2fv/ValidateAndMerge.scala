@@ -89,9 +89,7 @@ object ValidateAndMerge {
 
   def failuresToBytes[F[_]]: Pipe[F, RowFailure, Byte] = 
     _.through(rowFailureToString).
-      intersperse("\n").
-      through(text.utf8Encode[F]).
-      rechunkN(10 * 1024)
+      through(text.utf8Encode[F])
 
   private [fs2fv] def maxForGroup(group: Seq[CountsAndLine]): Int = 
     group.lastOption.map { case ((f, _), _) => f }.getOrElse(0)
@@ -107,8 +105,10 @@ object ValidateAndMerge {
       Pipe[F, Byte, KeyedLineGroup] = 
     _.through(toLines).
       through(validate(failureSink, rowValidator)).
-      through(extractKey).
-      through(groupKeys)
+      // through(extractKey).
+      // through(groupKeys)
+      // groupBy from fs2 is significantly slower than my version, not preserving chunkiness?
+      groupBy(extractKeyFromLine)
 
   def toLines[F[_]]: Pipe[F, Byte, TokenizedLine] = 
     _.through(text.utf8Decode).
@@ -147,8 +147,12 @@ object ValidateAndMerge {
   /**
    * Construct a key for the line (by parsing the first token as an int)
    */
-  def extractKey[F[_]]: Pipe[F, CountsAndLine, KeyedLine] = 
-    _.map { case r@(cs, line) => (line._1(0).toInt, r) }
+  // def extractKey[F[_]]: Pipe[F, CountsAndLine, KeyedLine] = 
+  //   _.map { case r@(cs, line) => (line._1(0).toInt, r) }
+
+  def extractKeyFromLine(cs: CountsAndLine): Int = cs match {
+     case r@(_, line) => line._1(0).toInt 
+  }
 
   /**
    * Ordering of the streams in 'ins' is significant, it affects ordering of values in the OutputRecord tuple.
@@ -176,17 +180,20 @@ object ValidateAndMerge {
   def groupAsLine(group: Seq[CountsAndLine]): String =
     if (group.isEmpty) "" else "\n" + group.map(countsAndLineToStr).mkString("\n") 
 
-  // this is a bottleneck, if there are a few failures
-  def rowFailureToString[F[_]]: Pipe[F, RowFailure, String] =
-    _.flatMap { case ((tokens, _), messages) =>
-      val s = messages.map { message =>
-        (tokens :+ message).mkString("|")
-      }
-      Stream(s:_*)
-    }
-
   def countsAndLineToStr(countsAndLine: CountsAndLine): String = {
     val (_, (ln, _)) = countsAndLine
     ln.mkString("|")
+  }
+
+  def rowFailureToString[F[_]]: Pipe[F, RowFailure, String] = { s =>
+    def failureToString(rf: RowFailure): String = {
+      val ((tokens, _), msgs) = rf
+      (tokens :+ (msgs.mkString(","))).mkString("|")
+    } 
+
+    s.mapChunks { chunk =>
+      val s = chunk.toVector.map(failureToString).mkString("\n") + "\n"
+      Chunk.singleton(s)
+    }
   }
 }

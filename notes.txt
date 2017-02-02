@@ -252,3 +252,39 @@ If we can process 50MB in 15s, then we can do 200MB per min, 1GB in 5 min. Is th
 Yes.
 
 What features can I add?
+
+TODO:
+
+ - [x] upgrade to 1.0 series build of fs2
+   - on my 24MB test data, seemed to reduce runtime from 14s to 13s
+ - [x] preserve chunkiness in error stream, rather than rechunking
+   - this helped quite a bit, took execution time down from 18s to 15s
+ - [x] use the built-in groupBy rather than my own
+   - significantly faster again, down to 12s, also raised a PR on fs2 :-)
+ - [ ] rather than passing an error sink into the transform, fork the inbound stream into two outbound streams
+ - [ ] create some sample files that contain more interesting data
+ - [ ] derive a key from the data (as opposed to just taking the first column)
+
+----
+
+Should take a look at this, creates a pair of Streams from an InputStream:
+
+  def processStream(inputStream: Task[InputStream])(implicit strategy: Strategy): Task[(Stream[Task, DataPointParseError], Stream[Task, DataPoint])] =
+    for {
+      errorQueue   <- async.boundedQueue[Task, DataPointParseError](QueueSize)
+      successQueue <- async.boundedQueue[Task, DataPoint](QueueSize)
+      done         <- async.signalOf[Task, Boolean](false)
+      _            <- io.readInputStream[Task](inputStream, InputStreamBufferSize).through(flow(errorQueue, successQueue, done)).run
+    } yield (errorQueue.dequeue.interruptWhen(done), successQueue.dequeue.interruptWhen(done))
+
+  def flow(errorQueue: Queue[Task, DataPointParseError], successQueue: Queue[Task, DataPoint], interrupt: Signal[Task, Boolean])
+          (implicit strategy: Strategy): SinkT[Byte] = {
+    byteStream =>
+      byteStream
+        .through(text.utf8Decode)
+        .through(text.lines)
+        .filter(line => line.trim.nonEmpty)
+        .map(DataPointParser.parseLine)
+        .observe(collectErrors andThen errorQueue.enqueue)
+        .to(collectSuccesses andThen successQueue.enqueue) ++ Stream.eval_(interrupt.set(true))
+  }
